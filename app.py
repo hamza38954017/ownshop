@@ -146,6 +146,10 @@ def orders():
     if status:
         all_orders = [o for o in all_orders if o.get("payment_status") == status]
     all_orders.sort(key=lambda o: o.get("created_at",""), reverse=True)
+    # Normalize: ensure every order has a 'price' field so template sum works
+    for o in all_orders:
+        if not o.get("price"):
+            o["price"] = o.get("total", 0)
     return render_template("orders.html", orders=all_orders,
                            date_from=date_from, date_to=date_to, status=status)
 
