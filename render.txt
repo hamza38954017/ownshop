@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: hamzashop-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    envVars:
+      - key: BOT_TOKEN
+        sync: false          # Set in Render dashboard
+      - key: BOT_USERNAME
+        sync: false
+      - key: FIREBASE_URL
+        sync: false          # e.g. https://your-project-default-rtdb.firebaseio.com
+      - key: FIREBASE_SECRET
+        sync: false          # Optional DB legacy secret
+      - key: PAYMENT_LINK
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
