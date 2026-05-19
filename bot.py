@@ -35,12 +35,7 @@ def gen_code(n=8):
 def gen_order_id():
     return "ORD" + "".join(random.choices(string.digits, k=8))
 
-def check_membership(user_id):
-    try:
-        m = bot.get_chat_member(CHANNEL_ID, user_id)
-        return m.status in ("member", "administrator", "creator")
-    except:
-        return False
+
 
 def get_commission():
     return fb.get_setting("refer_commission", DEFAULT_REFER_COMMISSION)
@@ -99,12 +94,6 @@ def ensure_user(message, referred_by=None):
 # ─────────────────────────────────────────────
 # KEYBOARDS
 # ─────────────────────────────────────────────
-def kb_join():
-    m = types.InlineKeyboardMarkup()
-    m.add(types.InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK))
-    m.add(types.InlineKeyboardButton("✅ I've Joined — Verify", callback_data="verify"))
-    return m
-
 def kb_main():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     m.add("🏠 Home", "🛒 My Cart")
@@ -212,50 +201,27 @@ def cmd_start(msg):
         if referrer and str(referrer) != cid:
             ref_by = str(referrer)
 
-    u = fb.get(f"users/{cid}")
-    if u and u.get("verified"):
+    u, is_new = ensure_user(msg, ref_by)
+    # Mark verified immediately — no channel join required
+    if not u.get("verified"):
+        fb.patch(f"users/{cid}", {"verified": True})
+
+    if is_new:
+        bot.send_message(
+            cid,
+            f"🎉 *Welcome to HamzaShop!*\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Hello *{u.get('first_name','Friend')}*! 👋\n\n"
+            f"🛍️ *FF Diamond* | *PUBG UC* | *Mobile* | *Laptop*\n"
+            f"💰 Wallet: ₹*{u.get('wallet', 0)}*\n"
+            f"🤝 Refer & Earn *10%* commission!\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👇 Use the menu below:",
+            parse_mode="Markdown", reply_markup=kb_main())
+    else:
         send_home(msg)
-        return
 
-    upd_temp(cid, {"referred_by": ref_by})
 
-    bot.send_message(
-        cid,
-        "🌟 *Welcome to HamzaShop!* 🌟\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "📢 *Step 1:* Join our official channel\n"
-        "✅ *Step 2:* Click Verify below\n\n"
-        "🎁 Earn *10% commission* on every referral!\n"
-        "━━━━━━━━━━━━━━━━━━━━━",
-        parse_mode="Markdown", reply_markup=kb_join())
-
-# ─────────────────────────────────────────────
-# VERIFY MEMBERSHIP
-# ─────────────────────────────────────────────
-@bot.callback_query_handler(func=lambda c: c.data == "verify")
-def cb_verify(c):
-    cid = str(c.message.chat.id)
-    if not check_membership(c.from_user.id):
-        bot.answer_callback_query(c.id, "❌ Please join the channel first!", show_alert=True)
-        return
-    bot.answer_callback_query(c.id, "✅ Verified!")
-    ref_by = get_temp(cid).get("referred_by")
-    u, is_new = ensure_user(c.message, ref_by)
-    fb.patch(f"users/{cid}", {"verified": True})
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    greet = "🎉 *Registration Successful!*" if is_new else "👋 *Welcome Back!*"
-    bot.send_message(
-        cid,
-        f"{greet}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Hello *{u.get('first_name','Friend')}*! 👋\n\n"
-        f"🛍️ *FF Diamond* | *PUBG UC* | *Mobile* | *Laptop*\n"
-        f"💰 Wallet: ₹*{u.get('wallet',0)}*\n"
-        f"🤝 Refer & Earn *10%* commission!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👇 Use the menu below:",
-        parse_mode="Markdown", reply_markup=kb_main())
 
 # ─────────────────────────────────────────────
 # HOME
@@ -312,7 +278,7 @@ def cb_home(c):
 def _guard(msg):
     cid = str(msg.chat.id)
     u = fb.get(f"users/{cid}")
-    if not u or not u.get("verified"):
+    if not u:
         cmd_start(msg); return False
     fb.patch(f"users/{cid}", {"last_seen": now_str()})
     return True
@@ -1078,9 +1044,12 @@ def broadcast_message(text=None, image_url=None, chat_ids=None):
                 bot.send_photo(cid, image_url)
             elif text:
                 bot.send_message(cid, text, parse_mode="Markdown")
+            else:
+                continue  # nothing to send
             ok += 1
             time.sleep(0.05)
-        except:
+        except Exception as e:
+            print(f"[Broadcast] Failed {cid}: {e}")
             fail += 1
     return ok, fail
 
