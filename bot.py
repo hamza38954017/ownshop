@@ -147,8 +147,10 @@ def kb_product_actions(product_id, category):
 # ─────────────────────────────────────────────
 def send_products(cid, mid, category, page=0):
     products = fb.get(f"products") or {}
+    # Strip "cat_" prefix — admin stores category as raw Firebase key, bot uses "cat_<key>"
+    cat_key = category[4:] if category.startswith("cat_") else category
     cat_products = [(pid, pd) for pid, pd in products.items()
-                    if pd.get("category") == category and pd.get("active", True)]
+                    if pd.get("category") == cat_key and pd.get("active", True)]
     if not cat_products:
         try:
             bot.edit_message_text("❌ No products found in this category.", cid, mid,
@@ -163,8 +165,9 @@ def send_products(cid, mid, category, page=0):
         markup.add(types.InlineKeyboardButton(label, callback_data=f"prod_{pid}"))
 
     nav = []
-    if has_prev: nav.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"pg_{category}_{page-1}"))
-    if has_next: nav.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"pg_{category}_{page+1}"))
+    # Use | as separator so Firebase keys (containing -) don't break the split
+    if has_prev: nav.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"pg|{category}|{page-1}"))
+    if has_next: nav.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"pg|{category}|{page+1}"))
     if nav: markup.row(*nav)
     markup.add(types.InlineKeyboardButton("🔙 Categories", callback_data="shop"))
 
@@ -235,15 +238,6 @@ def send_home(msg_or_cid, message_id=None):
     u = get_user(cid)
     if not u: return
     fname = u.get("first_name", fname)
-    m = types.InlineKeyboardMarkup(row_width=2)
-    m.add(
-        types.InlineKeyboardButton("🛍️ Shop Now",    callback_data="shop"),
-        types.InlineKeyboardButton("💰 Wallet",      callback_data="wallet"),
-    )
-    m.add(
-        types.InlineKeyboardButton("🛒 My Cart",     callback_data="view_cart"),
-        types.InlineKeyboardButton("👥 Refer & Earn",callback_data="refer"),
-    )
     text = (
         f"🏠 *Home*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -251,16 +245,11 @@ def send_home(msg_or_cid, message_id=None):
         f"💰 Wallet: ₹*{u.get('wallet',0):,.2f}*\n"
         f"🛒 Orders: *{u.get('purchase_count',0)}*\n"
         f"🤝 Referrals: *{u.get('refer_count',0)}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👇 Use the menu below:"
     )
-    if isinstance(msg_or_cid, str) or message_id:
-        mid = message_id or (msg_or_cid if isinstance(msg_or_cid, int) else None)
-        if mid:
-            try:
-                bot.edit_message_text(text, cid, mid, parse_mode="Markdown", reply_markup=m)
-                return
-            except: pass
-    bot.send_message(cid, text, parse_mode="Markdown", reply_markup=m)
+    # Always send with Reply keyboard so menu buttons are always visible
+    bot.send_message(cid, text, parse_mode="Markdown", reply_markup=kb_main())
 
 @bot.message_handler(func=lambda m: m.text == "🏠 Home")
 def msg_home(msg):
@@ -339,10 +328,10 @@ def cb_brand(c):
     cid = str(c.message.chat.id)
     send_products(cid, c.message.message_id, f"cat_mobile_{brand}")
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("pg_"))
+@bot.callback_query_handler(func=lambda c: c.data.startswith("pg|"))
 def cb_page(c):
-    _, category, page = c.data.split("_", 2)
-    send_products(str(c.message.chat.id), c.message.message_id, f"cat_{category}", int(page))
+    _, category, page = c.data.split("|", 2)
+    send_products(str(c.message.chat.id), c.message.message_id, category, int(page))
 
 # ─────────────────────────────────────────────
 # PRODUCT DETAIL
