@@ -3,9 +3,9 @@ import os
 # ─── Telegram Bot ───────────────────────────────────────────────────────────
 BOT_TOKEN        = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 BOT_USERNAME     = os.environ.get("BOT_USERNAME", "YourBotUsername")
-CHANNEL_LINK     = "https://t.me/hamzadeveloper3895"
-CHANNEL_ID       = "@hamzadeveloper3895"
-SUPPORT_USERNAME = "@hamzadeveloper3895"
+CHANNEL_LINK     = "https://t.me/shopatcheap"
+CHANNEL_ID       = "@shopatcheap"
+SUPPORT_USERNAME = "@Hamza3895"
 PAYMENT_LINK     = os.environ.get("PAYMENT_LINK", "https://your-payment-link.com")
 
 # ─── Firebase Realtime Database — REST only (/.json API) ─────────────────────
