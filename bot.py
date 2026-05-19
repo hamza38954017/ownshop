@@ -96,10 +96,11 @@ def ensure_user(message, referred_by=None):
 # ─────────────────────────────────────────────
 def kb_main():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    m.add("🏠 Home", "🛒 My Cart")
-    m.add("👥 Refer & Earn", "📜 History")
-    m.add("👤 My Refer", "💰 Wallet")
-    m.add("📋 Rules", "📞 Customer Support")
+    m.add("🏠 Home", "🛍️ Shop")
+    m.add("🛒 My Cart", "📜 History")
+    m.add("👥 Refer & Earn", "👤 My Refer")
+    m.add("💰 Wallet", "📋 Rules")
+    m.add("📞 Customer Support")
     return m
 
 def kb_categories():
@@ -223,6 +224,12 @@ def cmd_start(msg):
             parse_mode="Markdown", reply_markup=kb_main())
     else:
         send_home(msg)
+    # Always show shop categories after welcome/home
+    bot.send_message(cid,
+        "🛍️ *Shop — Categories*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "👇 Choose a category:",
+        parse_mode="Markdown", reply_markup=kb_categories())
 
 
 
@@ -275,7 +282,7 @@ def _guard(msg):
 # ─────────────────────────────────────────────
 # SHOP / CATEGORIES
 # ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text in ("🛍️ Shop","🛒 Shop Now"))
+@bot.message_handler(func=lambda m: m.text in ("🛍️ Shop","🛒 Shop Now","🛍️ Shop Now"))
 def msg_shop(msg):
     if not _guard(msg): return
     bot.send_message(str(msg.chat.id),
@@ -475,16 +482,30 @@ def cb_buy_now(c):
     if not p:
         bot.answer_callback_query(c.id, "❌ Not found"); return
 
-    cat = p.get("category","")
-    set_temp(cid, {"product_id": pid, "product": p, "category": cat})
+    cat_id = p.get("category","")
+    set_temp(cid, {"product_id": pid, "product": p, "category": cat_id})
 
-    # Determine required fields
-    if "ff_diamond" in cat:
+    # Determine product type — check hardcoded keys first, then Firebase category name
+    def _get_product_type(cat_id):
+        cid_lower = cat_id.lower()
+        if any(k in cid_lower for k in ("ff", "diamond", "free_fire", "freefir")):
+            return "ff"
+        if any(k in cid_lower for k in ("pubg", "bgmi", "uc")):
+            return "pubg"
+        # Look up category name from Firebase
+        cat_data = fb.get(f"categories/{cat_id}") or {}
+        cat_name = cat_data.get("name","").lower()
+        if any(k in cat_name for k in ("free fire", "ff", "diamond")):
+            return "ff"
+        if any(k in cat_name for k in ("pubg", "bgmi", "uc")):
+            return "pubg"
+        return "delivery"
+
+    ptype = _get_product_type(cat_id)
+    if ptype == "ff":
         _ask_ff_uid(cid, p)
-    elif "pubg" in cat:
+    elif ptype == "pubg":
         _ask_pubg_uid(cid, p)
-    elif "mobile" in cat or "laptop" in cat or "other" in cat:
-        _ask_delivery_info(cid, p)
     else:
         _ask_delivery_info(cid, p)
 
@@ -559,27 +580,43 @@ def handle_states(msg):
     # ── UTR ──
     if state == "wait_utr":
         utr = txt
-        if len(utr) < 6:
-            bot.send_message(cid, "❌ Invalid UTR. Please enter a valid UTR / transaction number:", reply_markup=types.ForceReply(selective=True)); return
+        if not utr.isdigit() or len(utr) != 12:
+            bot.send_message(cid, "❌ UTR must be exactly *12 digits*. Please enter again:", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True)); return
         upd_temp(cid, {"utr": utr})
         set_state(cid, "confirm_order")
         temp = get_temp(cid)
-        p = temp.get("product",{})
         m = types.InlineKeyboardMarkup(row_width=2)
         m.add(
             types.InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order"),
             types.InlineKeyboardButton("❌ Cancel",        callback_data="cancel_order"),
         )
-        bot.send_message(cid,
-            f"🧾 *Order Summary*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 Product: *{p.get('name','')}*\n"
-            f"💰 Price: *{fmt_price(p.get('price',0))}*\n"
-            f"🎮 UID: *{temp.get('uid','N/A')}*\n"
-            f"🔖 UTR: *{utr}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"✅ Confirm your order?",
-            parse_mode="Markdown", reply_markup=m)
+        is_cart = temp.get("is_cart", False)
+        if is_cart:
+            total = temp.get("cart_total", 0)
+            cart_items = temp.get("cart_items", {})
+            items_text = "\n".join([f"  • {v.get('name','Item')} × {v.get('qty',1)}" for v in cart_items.values()])
+            bot.send_message(cid,
+                f"🧾 *Order Summary*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🛒 Items:\n{items_text}\n\n"
+                f"💰 Total: *{fmt_price(total)}*\n"
+                f"🔖 UTR: *{utr}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ Confirm your order?",
+                parse_mode="Markdown", reply_markup=m)
+        else:
+            p = temp.get("product", {})
+            uid_line = f"🎮 UID: *{temp.get('uid','N/A')}*\n" if temp.get("uid") else ""
+            bot.send_message(cid,
+                f"🧾 *Order Summary*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 Product: *{p.get('name','')}*\n"
+                f"💰 Price: *{fmt_price(p.get('price',0))}*\n"
+                f"{uid_line}"
+                f"🔖 UTR: *{utr}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ Confirm your order?",
+                parse_mode="Markdown", reply_markup=m)
         return
 
     # ── DELIVERY FIELDS ──
@@ -645,8 +682,8 @@ def handle_states(msg):
 
     if state == "wait_deposit_utr":
         utr = txt
-        if len(utr) < 6:
-            bot.send_message(cid, "❌ Invalid UTR:", reply_markup=types.ForceReply(selective=True)); return
+        if not utr.isdigit() or len(utr) != 12:
+            bot.send_message(cid, "❌ UTR must be exactly *12 digits*. Please enter again:", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True)); return
         amount = get_temp(cid).get("deposit_amount", 0)
         txn = fb.post("transactions", {
             "chat_id": cid, "type": "deposit", "amount": amount,
@@ -723,45 +760,66 @@ def handle_states(msg):
 def cb_confirm_order(c):
     cid = str(c.message.chat.id)
     temp = get_temp(cid)
-    p = temp.get("product", {})
-    uid = temp.get("uid","")
     utr = temp.get("utr","")
-    delivery = temp.get("delivery",{})
     order_id = gen_order_id()
     u = get_user(cid)
+    is_cart = temp.get("is_cart", False)
 
-    order = {
-        "order_id": order_id, "chat_id": cid,
-        "user_name": u.get("full_name",""),
-        "product_id": temp.get("product_id",""),
-        "product_name": p.get("name",""),
-        "price": p.get("price",0),
-        "category": temp.get("category",""),
-        "uid": uid, "delivery": delivery,
-        "utr": utr, "payment_status": "pending",
-        "order_status": "pending",
-        "created_at": now_str(), "updated_at": now_str(),
-    }
-    fb.put(f"orders/{order_id}", order)
-
-    # Update user stats
-    fb.patch(f"users/{cid}", {
-        "purchase_count": u.get("purchase_count",0)+1,
-        "total_spent": u.get("total_spent",0)+p.get("price",0),
-    })
-
-    # Add to purchase history
-    fb.put(f"users/{cid}/purchase_history/{order_id}", {
-        "order_id": order_id, "product": p.get("name",""),
-        "price": p.get("price",0), "status":"pending", "date": now_str()
-    })
-
-    # Refer commission (pending until payment verified)
-    referred_by = u.get("referred_by","")
-    if referred_by:
-        commission = get_commission()
-        earned = round(p.get("price",0) * commission / 100, 2)
-        fb.put(f"referrals/{referred_by}/{cid}/pending_commission", earned)
+    if is_cart:
+        cart_items = temp.get("cart_items", {})
+        total = temp.get("cart_total", 0)
+        order = {
+            "order_id": order_id, "chat_id": cid,
+            "user_name": u.get("full_name",""),
+            "items": cart_items, "total": total, "price": total,
+            "utr": utr, "payment_method": "online",
+            "payment_status": "pending", "order_status": "pending",
+            "created_at": now_str(), "updated_at": now_str(),
+        }
+        fb.put(f"orders/{order_id}", order)
+        fb.delete(f"carts/{cid}")
+        fb.patch(f"users/{cid}", {
+            "purchase_count": u.get("purchase_count",0)+1,
+            "total_spent": u.get("total_spent",0)+total,
+        })
+        fb.put(f"users/{cid}/purchase_history/{order_id}", {
+            "order_id": order_id, "product": f"{len(cart_items)} item(s)",
+            "price": total, "status":"pending", "date": now_str()
+        })
+        amount_display = fmt_price(total)
+        product_line = f"🛒 Items: *{len(cart_items)}*"
+    else:
+        p = temp.get("product", {})
+        uid = temp.get("uid","")
+        delivery = temp.get("delivery",{})
+        price = p.get("price",0)
+        order = {
+            "order_id": order_id, "chat_id": cid,
+            "user_name": u.get("full_name",""),
+            "product_name": p.get("name",""),
+            "price": price,
+            "category": temp.get("category",""),
+            "uid": uid, "delivery": delivery,
+            "utr": utr, "payment_status": "pending",
+            "order_status": "pending",
+            "created_at": now_str(), "updated_at": now_str(),
+        }
+        fb.put(f"orders/{order_id}", order)
+        fb.patch(f"users/{cid}", {
+            "purchase_count": u.get("purchase_count",0)+1,
+            "total_spent": u.get("total_spent",0)+price,
+        })
+        fb.put(f"users/{cid}/purchase_history/{order_id}", {
+            "order_id": order_id, "product": p.get("name",""),
+            "price": price, "status":"pending", "date": now_str()
+        })
+        referred_by = u.get("referred_by","")
+        if referred_by:
+            commission = get_commission()
+            earned = round(price * commission / 100, 2)
+            fb.put(f"referrals/{referred_by}/{cid}/pending_commission", earned)
+        amount_display = fmt_price(price)
+        product_line = f"📦 Product: *{p.get('name','')}*"
 
     clear_state(cid)
     try: bot.delete_message(cid, c.message.message_id)
@@ -769,9 +827,8 @@ def cb_confirm_order(c):
     bot.send_message(cid,
         f"🎉 *Order Placed Successfully!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔖 Order ID: *{order_id}*\n"
-        f"📦 Product: *{p.get('name','')}*\n"
-        f"💰 Amount: *{fmt_price(p.get('price',0))}*\n"
+        f"{product_line}\n"
+        f"💰 Amount: *{amount_display}*\n"
         f"⏳ Status: *Pending Payment Verification*\n\n"
         f"We'll notify you once verified! ✉️",
         parse_mode="Markdown", reply_markup=kb_main())
@@ -853,15 +910,20 @@ def cb_cart_wallet(c):
 @bot.callback_query_handler(func=lambda c: c.data == "cart_pay_online")
 def cb_cart_online(c):
     cid = str(c.message.chat.id)
+    cart = fb.get(f"carts/{cid}") or {}
+    total = sum(v["price"]*v.get("qty",1) for v in cart.values())
+    # Save cart data so UTR handler can build the correct order
+    upd_temp(cid, {"cart_items": cart, "cart_total": total, "is_cart": True})
     set_state(cid, "wait_utr")
     m = types.InlineKeyboardMarkup()
     m.add(types.InlineKeyboardButton("💳 Pay Now", url=PAYMENT_LINK))
     try: bot.delete_message(cid, c.message.message_id)
     except: pass
     bot.send_message(cid,
-        "💳 *Pay Online*\n━━━━━━━━━━━━━━━━━━━━━\n"
-        "1️⃣ Click *Pay Now*\n"
-        "2️⃣ Enter UTR after payment:",
+        f"💳 *Pay Online*\n━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Total: *{fmt_price(total)}*\n\n"
+        f"1️⃣ Click *Pay Now*\n"
+        f"2️⃣ Enter UTR after payment:",
         parse_mode="Markdown", reply_markup=m)
 
 # ─────────────────────────────────────────────
@@ -987,7 +1049,7 @@ def msg_history(msg):
     lines = ["📜 *Purchase History*\n━━━━━━━━━━━━━━━━━━━━━"]
     for oid, od in sorted(hist.items(), key=lambda x: x[1].get("date",""), reverse=True)[:10]:
         st = {"success":"✅","pending":"⏳","failed":"❌"}.get(od.get("status","pending"),"⏳")
-        lines.append(f"{st} *{od.get('product','')}*\n   ₹{od.get('price',0)} | {od.get('date','')[:10]} | ID: `{oid}`")
+        lines.append(f"{st} *{od.get('product','')}*\n   ₹{od.get('price',0)} | {od.get('date','')[:10]}")
     bot.send_message(cid, "\n".join(lines), parse_mode="Markdown")
 
 # ─────────────────────────────────────────────
