@@ -20,7 +20,7 @@ FIREBASE_SECRET = os.environ.get("FIREBASE_SECRET", "")
 # ─── Admin Panel ─────────────────────────────────────────────────────────────
 ADMIN_USERNAME  = "admin"
 ADMIN_PASSWORD  = "admin123"
-SECRET_KEY      = os.environ.get("SECRET_KEY", "hamzashop-ultra-secret-2024")
+SECRET_KEY      = os.environ.get("SECRET_KEY", "hamza-super-secret-xyz-2026")
 FLASK_PORT      = int(os.environ.get("PORT", 5000))
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
