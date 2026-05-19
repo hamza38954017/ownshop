@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>{% block title %}HamzaShop Admin{% endblock %}</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+<style>
+:root{
+  --bg:#0f1117;--sidebar:#161b27;--card:#1e2535;--card2:#252d3d;
+  --accent:#6c63ff;--accent2:#f72585;--accent3:#4cc9f0;--accent4:#f4a261;
+  --green:#2ecc71;--red:#e74c3c;--yellow:#f39c12;
+  --text:#e2e8f0;--muted:#8892a4;--border:#2a3347;
+  --radius:12px;--shadow:0 4px 24px rgba(0,0,0,.4);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+
+/* ── Sidebar ── */
+.sidebar{width:240px;background:var(--sidebar);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;position:fixed;height:100vh;overflow-y:auto;z-index:100}
+.sidebar-logo{padding:24px 20px;border-bottom:1px solid var(--border)}
+.sidebar-logo h2{font-size:1.2rem;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--accent3));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sidebar-logo span{font-size:.75rem;color:var(--muted)}
+.nav-section{padding:8px 12px;margin-top:8px}
+.nav-label{font-size:.65rem;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);
+  padding:8px 8px 4px}
+.nav-link{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;
+  color:var(--muted);text-decoration:none;font-size:.875rem;transition:.2s;margin-bottom:2px}
+.nav-link:hover,.nav-link.active{background:rgba(108,99,255,.15);color:var(--text)}
+.nav-link.active{color:var(--accent);border-left:3px solid var(--accent);padding-left:9px}
+.nav-link i{width:18px;text-align:center;font-size:.95rem}
+.badge{margin-left:auto;background:var(--accent2);color:#fff;font-size:.65rem;
+  padding:2px 7px;border-radius:99px;font-weight:600}
+
+/* ── Main ── */
+.main{margin-left:240px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+.topbar{background:var(--sidebar);border-bottom:1px solid var(--border);
+  padding:14px 28px;display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:50}
+.topbar h1{font-size:1.1rem;font-weight:600}
+.topbar-right{display:flex;align-items:center;gap:14px}
+.avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem}
+.content{padding:28px;flex:1}
+
+/* ── Cards ── */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-bottom:28px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px;position:relative;overflow:hidden;transition:.2s}
+.stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.stat-card.blue::before{background:linear-gradient(90deg,var(--accent),var(--accent3))}
+.stat-card.pink::before{background:linear-gradient(90deg,var(--accent2),var(--accent4))}
+.stat-card.green::before{background:linear-gradient(90deg,var(--green),var(--accent3))}
+.stat-card.yellow::before{background:linear-gradient(90deg,var(--yellow),var(--accent4))}
+.stat-card.red::before{background:linear-gradient(90deg,var(--red),var(--accent2))}
+.stat-icon{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;font-size:1.2rem;margin-bottom:14px}
+.stat-icon.blue{background:rgba(108,99,255,.2);color:var(--accent)}
+.stat-icon.pink{background:rgba(247,37,133,.2);color:var(--accent2)}
+.stat-icon.green{background:rgba(46,204,113,.2);color:var(--green)}
+.stat-icon.yellow{background:rgba(243,156,18,.2);color:var(--yellow)}
+.stat-icon.red{background:rgba(231,76,60,.2);color:var(--red)}
+.stat-value{font-size:1.8rem;font-weight:700;line-height:1}
+.stat-label{font-size:.78rem;color:var(--muted);margin-top:6px}
+
+/* ── Table ── */
+.table-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.table-header{padding:18px 20px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.table-header h3{font-size:1rem;font-weight:600}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{background:var(--card2);padding:12px 16px;text-align:left;font-size:.75rem;
+  text-transform:uppercase;letter-spacing:1px;color:var(--muted);white-space:nowrap}
+td{padding:12px 16px;border-top:1px solid var(--border);font-size:.875rem;vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+
+/* ── Badges ── */
+.status-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;
+  border-radius:99px;font-size:.72rem;font-weight:600}
+.status-badge.success{background:rgba(46,204,113,.15);color:var(--green)}
+.status-badge.pending{background:rgba(243,156,18,.15);color:var(--yellow)}
+.status-badge.failed {background:rgba(231,76,60,.15); color:var(--red)}
+.status-badge.processing{background:rgba(76,201,240,.15);color:var(--accent3)}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:8px;
+  font-size:.85rem;font-weight:500;cursor:pointer;border:none;text-decoration:none;transition:.2s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:#5a52e0}
+.btn-success{background:var(--green);color:#fff}
+.btn-success:hover{background:#27ae60}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover{background:#c0392b}
+.btn-warning{background:var(--yellow);color:#fff}
+.btn-warning:hover{background:#d68910}
+.btn-sm{padding:5px 12px;font-size:.78rem}
+.btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn-outline:hover{background:var(--card2)}
+
+/* ── Forms ── */
+.form-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:28px}
+.form-group{margin-bottom:20px}
+.form-label{display:block;font-size:.82rem;color:var(--muted);margin-bottom:7px;font-weight:500}
+.form-control{width:100%;background:var(--card2);border:1px solid var(--border);
+  color:var(--text);padding:10px 14px;border-radius:8px;font-size:.875rem;transition:.2s}
+.form-control:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(108,99,255,.15)}
+select.form-control option{background:var(--card2)}
+textarea.form-control{resize:vertical;min-height:100px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-hint{font-size:.75rem;color:var(--muted);margin-top:5px}
+
+/* ── Alerts ── */
+.alert{padding:12px 18px;border-radius:8px;margin-bottom:18px;font-size:.875rem;
+  display:flex;align-items:center;gap:10px}
+.alert-success{background:rgba(46,204,113,.15);border:1px solid rgba(46,204,113,.3);color:var(--green)}
+.alert-warning{background:rgba(243,156,18,.15);border:1px solid rgba(243,156,18,.3);color:var(--yellow)}
+.alert-danger {background:rgba(231,76,60,.15); border:1px solid rgba(231,76,60,.3); color:var(--red)}
+
+/* ── Misc ── */
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px}
+.page-header h2{font-size:1.3rem;font-weight:700}
+.search-box{display:flex;gap:10px;align-items:center}
+.search-box input{background:var(--card2);border:1px solid var(--border);color:var(--text);
+  padding:8px 14px;border-radius:8px;font-size:.85rem;width:220px}
+.search-box input:focus{outline:none;border-color:var(--accent)}
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty-state i{font-size:3rem;margin-bottom:16px;opacity:.4}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.72rem;
+  background:var(--card2);border:1px solid var(--border);color:var(--muted)}
+.avatar-sm{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;color:#fff}
+
+/* Modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;
+  align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:28px;width:90%;max-width:480px;position:relative}
+.modal-close{position:absolute;top:14px;right:14px;background:none;border:none;
+  color:var(--muted);font-size:1.2rem;cursor:pointer}
+
+/* Responsive */
+@media(max-width:768px){
+  .sidebar{width:200px}
+  .main{margin-left:200px}
+  .form-row{grid-template-columns:1fr}
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h2>🛍️ HamzaShop</h2>
+    <span>Admin Panel</span>
+  </div>
+  <nav class="nav-section">
+    <div class="nav-label">Overview</div>
+    <a href="{{ url_for('dashboard') }}" class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}">
+      <i class="fa-solid fa-gauge-high"></i> Dashboard
+    </a>
+
+    <div class="nav-label" style="margin-top:12px">Commerce</div>
+    <a href="{{ url_for('orders') }}" class="nav-link {% if request.endpoint=='orders' %}active{% endif %}">
+      <i class="fa-solid fa-bag-shopping"></i> Orders
+    </a>
+    <a href="{{ url_for('products') }}" class="nav-link {% if request.endpoint=='products' %}active{% endif %}">
+      <i class="fa-solid fa-box-open"></i> Products
+    </a>
+    <a href="{{ url_for('categories') }}" class="nav-link {% if request.endpoint=='categories' %}active{% endif %}">
+      <i class="fa-solid fa-layer-group"></i> Categories
+    </a>
+
+    <div class="nav-label" style="margin-top:12px">Finance</div>
+    <a href="{{ url_for('deposits') }}" class="nav-link {% if request.endpoint=='deposits' %}active{% endif %}">
+      <i class="fa-solid fa-money-bill-wave"></i> Deposits
+    </a>
+    <a href="{{ url_for('withdrawals') }}" class="nav-link {% if request.endpoint=='withdrawals' %}active{% endif %}">
+      <i class="fa-solid fa-wallet"></i> Withdrawals
+    </a>
+
+    <div class="nav-label" style="margin-top:12px">Users</div>
+    <a href="{{ url_for('users') }}" class="nav-link {% if request.endpoint=='users' %}active{% endif %}">
+      <i class="fa-solid fa-users"></i> All Users
+    </a>
+    <a href="{{ url_for('referrals') }}" class="nav-link {% if request.endpoint=='referrals' %}active{% endif %}">
+      <i class="fa-solid fa-share-nodes"></i> Referrals
+    </a>
+
+    <div class="nav-label" style="margin-top:12px">Tools</div>
+    <a href="{{ url_for('broadcast') }}" class="nav-link {% if request.endpoint=='broadcast' %}active{% endif %}">
+      <i class="fa-solid fa-bullhorn"></i> Broadcast
+    </a>
+    <a href="{{ url_for('settings') }}" class="nav-link {% if request.endpoint=='settings' %}active{% endif %}">
+      <i class="fa-solid fa-gear"></i> Settings
+    </a>
+
+    <div style="margin-top:auto;padding:20px 12px 12px">
+      <a href="{{ url_for('logout') }}" class="nav-link" style="color:var(--red)">
+        <i class="fa-solid fa-right-from-bracket"></i> Logout
+      </a>
+    </div>
+  </nav>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+    <div class="topbar-right">
+      <span style="font-size:.8rem;color:var(--muted)">
+        <i class="fa-regular fa-clock"></i>
+        <span id="clock"></span>
+      </span>
+      <div class="avatar">A</div>
+    </div>
+  </div>
+
+  <div class="content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat,msg in messages %}
+        <div class="alert alert-{{ 'success' if cat=='success' else 'danger' if cat=='danger' else 'warning' }}">
+          <i class="fa-solid fa-{{ 'check-circle' if cat=='success' else 'triangle-exclamation' }}"></i>
+          {{ msg }}
+        </div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</div>
+
+<script>
+function pad(n){return n<10?'0'+n:n}
+function tick(){
+  const d=new Date();
+  document.getElementById('clock').textContent=
+    pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+}
+tick(); setInterval(tick,1000);
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Categories{% endblock %}
+{% block page_title %}🏷️ Categories{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Categories</h2>
+  <button class="btn btn-primary" onclick="document.getElementById('addCatModal').classList.add('open')">
+    <i class="fa-solid fa-plus"></i> Add Category
+  </button>
+</div>
+<div class="table-card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Emoji</th><th>Name</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for c in categories %}
+      <tr>
+        <td style="font-size:1.4rem">{{ c.emoji or '🏷️' }}</td>
+        <td style="font-weight:500">{{ c.name }}</td>
+        <td><span class="status-badge {{ 'success' if c.active else 'failed' }}">{{ '✅ Active' if c.active else '❌ Hidden' }}</span></td>
+        <td style="font-size:.75rem;color:var(--muted)">{{ (c.created_at or '')[:10] }}</td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="openEditCat('{{ c._id }}','{{ c.name }}','{{ c.emoji }}','{{ '1' if c.active else '0' }}')">
+            <i class="fa-solid fa-pen"></i>
+          </button>
+          <form method="POST" action="{{ url_for('delete_category', cid=c._id) }}" style="display:inline"
+                onsubmit="return confirm('Delete category?')">
+            <button class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5"><div class="empty-state"><i class="fa-solid fa-layer-group"></i><p>No custom categories yet</p></div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Add Modal -->
+<div class="modal-overlay" id="addCatModal">
+  <div class="modal">
+    <button class="modal-close" onclick="document.getElementById('addCatModal').classList.remove('open')"><i class="fa-solid fa-xmark"></i></button>
+    <h3 style="margin-bottom:20px">➕ Add Category</h3>
+    <form method="POST" action="{{ url_for('add_category') }}">
+      <div class="form-group"><label class="form-label">Emoji</label>
+        <input name="emoji" class="form-control" value="🏷️" style="font-size:1.4rem"/></div>
+      <div class="form-group"><label class="form-label">Name *</label>
+        <input name="name" class="form-control" required placeholder="Category name"/></div>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Add</button>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editCatModal">
+  <div class="modal">
+    <button class="modal-close" onclick="document.getElementById('editCatModal').classList.remove('open')"><i class="fa-solid fa-xmark"></i></button>
+    <h3 style="margin-bottom:20px">✏️ Edit Category</h3>
+    <form method="POST" id="editCatForm">
+      <div class="form-group"><label class="form-label">Emoji</label>
+        <input name="emoji" id="editEmoji" class="form-control" style="font-size:1.4rem"/></div>
+      <div class="form-group"><label class="form-label">Name</label>
+        <input name="name" id="editName" class="form-control"/></div>
+      <div class="form-group"><label class="form-label">Status</label>
+        <select name="active" id="editActive" class="form-control">
+          <option value="1">✅ Active</option><option value="0">❌ Hidden</option>
+        </select></div>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save</button>
+    </form>
+  </div>
+</div>
+{% block scripts %}
+<script>
+function openEditCat(id,name,emoji,active){
+  document.getElementById('editCatForm').action='/categories/'+id+'/edit';
+  document.getElementById('editName').value=name;
+  document.getElementById('editEmoji').value=emoji;
+  document.getElementById('editActive').value=active;
+  document.getElementById('editCatModal').classList.add('open');
+}
+</script>
+{% endblock %}
+{% endblock %}

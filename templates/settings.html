@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block page_title %}⚙️ Settings{% endblock %}
+{% block content %}
+<div class="page-header"><h2>Store Settings</h2></div>
+<div style="max-width:700px">
+  <form method="POST">
+    <div class="form-card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">💰 Referral Settings</h3>
+      <div class="form-group">
+        <label class="form-label">Refer Commission (%)</label>
+        <input name="commission" type="number" min="0" max="100" step="0.1"
+               class="form-control" value="{{ commission }}" style="max-width:200px"/>
+        <div class="form-hint">Users earn this % of every purchase made by their referrals.</div>
+      </div>
+    </div>
+
+    <div class="form-card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">💳 Payment Settings</h3>
+      <div class="form-group">
+        <label class="form-label">Payment Link (UPI / Gateway URL)</label>
+        <input name="payment_link" class="form-control" value="{{ payment_link }}"
+               placeholder="https://razorpay.com/pay/... or upi://pay?..."/>
+        <div class="form-hint">This link is shown to users when they click "Pay Now".</div>
+      </div>
+    </div>
+
+    <div class="form-card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">📞 Support Settings</h3>
+      <div class="form-group">
+        <label class="form-label">Support Username</label>
+        <input name="support_username" class="form-control" value="{{ support_username }}"
+               placeholder="@hamzadeveloper3895"/>
+      </div>
+    </div>
+
+    <div class="form-card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">📋 Bot Rules Text</h3>
+      <div class="form-group">
+        <label class="form-label">Rules (Markdown supported)</label>
+        <textarea name="rules_text" class="form-control" style="min-height:220px;font-family:monospace;font-size:.82rem">{{ rules_text }}</textarea>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">
+      <i class="fa-solid fa-save"></i> Save All Settings
+    </button>
+  </form>
+</div>
+{% endblock %}

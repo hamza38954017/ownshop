@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Orders — HamzaShop Admin{% endblock %}
+{% block page_title %}📦 Orders{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>All Orders</h2>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <form method="GET" style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="date" name="from" value="{{ date_from }}" class="form-control" style="width:150px;padding:7px 10px"/>
+      <input type="date" name="to"   value="{{ date_to   }}" class="form-control" style="width:150px;padding:7px 10px"/>
+      <select name="status" class="form-control" style="width:160px;padding:7px 10px">
+        <option value="">All Status</option>
+        <option value="pending"    {% if status=='pending'    %}selected{% endif %}>⏳ Pending</option>
+        <option value="success"    {% if status=='success'    %}selected{% endif %}>✅ Success</option>
+        <option value="failed"     {% if status=='failed'     %}selected{% endif %}>❌ Failed</option>
+        <option value="processing" {% if status=='processing' %}selected{% endif %}>🔄 Processing</option>
+      </select>
+      <button type="submit" class="btn btn-primary btn-sm"><i class="fa-solid fa-filter"></i> Filter</button>
+      <a href="{{ url_for('orders') }}" class="btn btn-outline btn-sm">Clear</a>
+    </form>
+  </div>
+</div>
+
+<div class="table-card">
+  <div class="table-header">
+    <h3>{{ orders|length }} order(s) found</h3>
+    <span style="font-size:.8rem;color:var(--muted)">Total: ₹{{ "%.2f"|format(orders|sum(attribute='price')|float + orders|sum(attribute='total')|float) }}</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Order ID</th><th>User</th><th>Product</th>
+          <th>Amount</th><th>UTR</th><th>Payment</th>
+          <th>Status</th><th>Date</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for o in orders %}
+      <tr>
+        <td><code style="font-size:.75rem;color:var(--accent3)">{{ o._id }}</code></td>
+        <td>
+          <div style="font-weight:500;font-size:.82rem">{{ o.user_name or 'Unknown' }}</div>
+          <div style="font-size:.72rem;color:var(--muted)">{{ o.chat_id }}</div>
+        </td>
+        <td>
+          <div style="font-size:.82rem;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            {{ o.product_name or (o.items|length|string + ' items' if o.items else '—') }}
+          </div>
+          {% if o.uid %}<div style="font-size:.72rem;color:var(--muted)">UID: {{ o.uid }}</div>{% endif %}
+        </td>
+        <td style="font-weight:600;color:var(--green)">₹{{ o.price or o.total or 0 }}</td>
+        <td><code style="font-size:.72rem">{{ o.utr or '—' }}</code></td>
+        <td>
+          <span class="status-badge {{ o.payment_status or 'pending' }}">
+            {{ '✅' if o.payment_status=='success' else '❌' if o.payment_status=='failed' else '🔄' if o.payment_status=='processing' else '⏳' }}
+            {{ (o.payment_status or 'pending')|title }}
+          </span>
+        </td>
+        <td>
+          <span class="status-badge {{ o.order_status or 'pending' }}">
+            {{ (o.order_status or 'pending')|title }}
+          </span>
+        </td>
+        <td style="font-size:.75rem;color:var(--muted)">{{ (o.created_at or '')[:16].replace('T',' ') }}</td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="openModal('{{ o._id }}','{{ o.payment_status or 'pending' }}','{{ o.order_status or 'pending' }}')">
+            <i class="fa-solid fa-pen"></i>
+          </button>
+          <form method="POST" action="/orders/{{ o._id }}/delete" style="display:inline"
+                onsubmit="return confirm('Delete this order?')">
+            <button class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9"><div class="empty-state"><i class="fa-solid fa-box-open"></i><p>No orders found</p></div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Update Modal -->
+<div class="modal-overlay" id="orderModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+    <h3 style="margin-bottom:20px;font-size:1rem">✏️ Update Order</h3>
+    <form method="POST" id="updateForm">
+      <div class="form-group">
+        <label class="form-label">Payment Status</label>
+        <select name="payment_status" id="modalPayment" class="form-control">
+          <option value="pending">⏳ Pending</option>
+          <option value="success">✅ Success</option>
+          <option value="failed">❌ Failed</option>
+          <option value="processing">🔄 Processing</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Order Status</label>
+        <select name="order_status" id="modalOrder" class="form-control">
+          <option value="pending">⏳ Pending</option>
+          <option value="processing">🔄 Processing</option>
+          <option value="completed">✅ Completed</option>
+          <option value="cancelled">❌ Cancelled</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Admin Note (optional)</label>
+        <textarea name="note" class="form-control" style="min-height:70px" placeholder="Add a note..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save</button>
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% block scripts %}
+<script>
+function openModal(id, payStatus, ordStatus){
+  document.getElementById('updateForm').action='/orders/'+id+'/update';
+  document.getElementById('modalPayment').value = payStatus;
+  document.getElementById('modalOrder').value   = ordStatus;
+  document.getElementById('orderModal').classList.add('open');
+}
+function closeModal(){
+  document.getElementById('orderModal').classList.remove('open');
+}
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Users — HamzaShop Admin{% endblock %}
+{% block page_title %}👥 Users{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>All Users ({{ users|length }})</h2>
+  <form class="search-box" method="GET">
+    <i class="fa-solid fa-magnifying-glass" style="color:var(--muted)"></i>
+    <input name="q" value="{{ q }}" placeholder="Search name / username / ID…"/>
+    <button type="submit" class="btn btn-primary btn-sm">Search</button>
+    {% if q %}<a href="{{ url_for('users') }}" class="btn btn-outline btn-sm">Clear</a>{% endif %}
+  </form>
+</div>
+<div class="table-card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>User</th><th>Chat ID</th><th>Wallet</th><th>Orders</th><th>Refs</th><th>Verified</th><th>Joined</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="avatar-sm">{{ u.full_name[0]|upper if u.full_name else 'U' }}</div>
+            <div>
+              <div style="font-weight:500;font-size:.83rem">{{ u.full_name or 'Unknown' }}</div>
+              <div style="font-size:.72rem;color:var(--muted)">@{{ u.username or '—' }}</div>
+            </div>
+          </div>
+        </td>
+        <td><code style="font-size:.75rem">{{ u.chat_id or u._id }}</code></td>
+        <td style="color:var(--green);font-weight:600">₹{{ "%.2f"|format(u.wallet or 0) }}</td>
+        <td>{{ u.purchase_count or 0 }}</td>
+        <td>{{ u.refer_count or 0 }}</td>
+        <td>
+          <span class="status-badge {{ 'success' if u.verified else 'failed' }}">
+            {{ '✅' if u.verified else '❌' }}
+          </span>
+        </td>
+        <td style="font-size:.75rem;color:var(--muted)">{{ (u.created_at or '')[:10] }}</td>
+        <td>
+          <a href="{{ url_for('edit_user', cid=u._id) }}" class="btn btn-sm btn-outline">
+            <i class="fa-solid fa-pen"></i>
+          </a>
+          <form method="POST" action="{{ url_for('delete_user', cid=u._id) }}" style="display:inline"
+                onsubmit="return confirm('Delete user?')">
+            <button class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8"><div class="empty-state"><i class="fa-solid fa-users"></i><p>No users found</p></div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}{{ action }} Product — HamzaShop Admin{% endblock %}
+{% block page_title %}{{ '✏️ Edit' if action=='Edit' else '➕ Add' }} Product{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>{{ action }} Product</h2>
+  <a href="{{ url_for('products') }}" class="btn btn-outline"><i class="fa-solid fa-arrow-left"></i> Back</a>
+</div>
+
+<form method="POST" id="productForm">
+<div style="display:grid;grid-template-columns:2fr 1fr;gap:20px">
+
+  <!-- Left col -->
+  <div>
+    <div class="form-card" style="margin-bottom:20px">
+      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">📋 Basic Information</h3>
+      <div class="form-group">
+        <label class="form-label">Product Name *</label>
+        <input name="name" class="form-control" required value="{{ product.name if product else '' }}" placeholder="e.g. 100 FF Diamonds"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <textarea name="description" class="form-control">{{ product.description if product else '' }}</textarea>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Price (₹) *</label>
+          <input name="price" type="number" step="0.01" min="0" class="form-control" required
+                 value="{{ product.price if product else '' }}" placeholder="80"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Stock</label>
+          <input name="stock" type="number" min="0" class="form-control"
+                 value="{{ product.stock if product else 999 }}" placeholder="999"/>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Category *</label>
+          <select name="category" class="form-control" required>
+            <option value="">— Select Category —</option>
+            <option value="cat_ff_diamond" {% if product and product.category=='cat_ff_diamond' %}selected{% endif %}>💎 FF Diamond</option>
+            <option value="cat_pubg_uc"    {% if product and product.category=='cat_pubg_uc'    %}selected{% endif %}>🎮 PUBG UC</option>
+            <option value="cat_mobile"     {% if product and product.category=='cat_mobile'     %}selected{% endif %}>📱 Mobile</option>
+            <option value="cat_mobile_samsung" {% if product and product.category=='cat_mobile_samsung' %}selected{% endif %}>📱 Samsung</option>
+            <option value="cat_mobile_apple"   {% if product and product.category=='cat_mobile_apple'   %}selected{% endif %}>🍎 Apple</option>
+            <option value="cat_mobile_vivo"    {% if product and product.category=='cat_mobile_vivo'    %}selected{% endif %}>📲 Vivo</option>
+            <option value="cat_laptop"     {% if product and product.category=='cat_laptop'     %}selected{% endif %}>💻 Laptop</option>
+            <option value="cat_other"      {% if product and product.category=='cat_other'      %}selected{% endif %}>🎁 Other</option>
+            {% for c in categories %}
+            <option value="{{ c._id }}" {% if product and product.category==c._id %}selected{% endif %}>{{ c.emoji }} {{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Active</label>
+          <select name="active" class="form-control">
+            <option value="1" {% if not product or product.active %}selected{% endif %}>✅ Active</option>
+            <option value="0" {% if product and not product.active %}selected{% endif %}>❌ Inactive</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Image URL (optional)</label>
+        <input name="image_url" class="form-control" value="{{ product.image_url if product else '' }}"
+               placeholder="https://example.com/image.jpg" id="imgUrl" oninput="previewImg(this.value)"/>
+      </div>
+      <div id="imgPreview" style="display:none;margin-top:10px">
+        <img id="imgPreviewEl" src="" style="max-height:120px;border-radius:8px;border:1px solid var(--border)"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Game Info (for gaming products)</label>
+        <input name="game_info" class="form-control" value="{{ product.game_info if product else '' }}"
+               placeholder="e.g. Top-up directly to your Free Fire account"/>
+      </div>
+    </div>
+
+    <!-- Custom Fields -->
+    <div class="form-card">
+      <h3 style="margin-bottom:8px;font-size:.95rem;color:var(--muted)">🧩 Custom Input Fields</h3>
+      <p style="font-size:.78rem;color:var(--muted);margin-bottom:16px">
+        Define extra fields users must fill when purchasing. One per line.<br>
+        Format: <code style="background:var(--card2);padding:2px 6px;border-radius:4px">Label | type | required | validate</code><br>
+        Types: <code>text</code> <code>number</code> <code>email</code> <code>mobile</code> <code>uid</code><br>
+        Example: <code>Gmail Address | email | yes | gmail</code>
+      </p>
+      <div class="form-group">
+        <label class="form-label">Custom Fields</label>
+        <textarea name="custom_fields" class="form-control" style="min-height:140px;font-family:monospace;font-size:.82rem"
+                  placeholder="FF UID | uid | yes&#10;Email | email | no | gmail">{% if product and product.fields %}{% for f in product.fields %}{{ f.label }} | {{ f.type }} | {{ 'yes' if f.required else 'no' }}{% if f.validate %} | {{ f.validate }}{% endif %}
+{% endfor %}{% endif %}</textarea>
+      </div>
+
+      <!-- Field Preview -->
+      <div id="fieldPreview" style="margin-top:10px"></div>
+      <button type="button" class="btn btn-outline btn-sm" onclick="previewFields()">
+        <i class="fa-solid fa-eye"></i> Preview Fields
+      </button>
+    </div>
+  </div>
+
+  <!-- Right col -->
+  <div>
+    <div class="form-card">
+      <h3 style="margin-bottom:16px;font-size:.95rem;color:var(--muted)">💡 Tips</h3>
+      <ul style="font-size:.8rem;color:var(--muted);line-height:2;padding-left:16px">
+        <li>Set stock to <b>999</b> for unlimited</li>
+        <li>Use <b>uid</b> type for game UIDs</li>
+        <li>Use <b>mobile</b> for phone validation</li>
+        <li>Use <b>email</b> for email + optional <b>gmail</b> domain check</li>
+        <li>Set active=No to hide from shop</li>
+      </ul>
+    </div>
+
+    {% if product %}
+    <div class="form-card" style="margin-top:16px">
+      <h3 style="margin-bottom:10px;font-size:.95rem;color:var(--muted)">📊 Stats</h3>
+      <div style="font-size:.85rem;line-height:2">
+        <div>👁️ Views: <b>{{ product.views or 0 }}</b></div>
+        <div>🆔 ID: <code style="font-size:.75rem">{{ product._id }}</code></div>
+        <div style="font-size:.75rem;color:var(--muted)">{{ (product.created_at or '')[:10] }}</div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">
+      <button type="submit" class="btn btn-primary">
+        <i class="fa-solid fa-save"></i> {{ action }} Product
+      </button>
+      <a href="{{ url_for('products') }}" class="btn btn-outline">
+        <i class="fa-solid fa-xmark"></i> Cancel
+      </a>
+    </div>
+  </div>
+</div>
+</form>
+
+{% block scripts %}
+<script>
+function previewImg(url){
+  const el = document.getElementById('imgPreviewEl');
+  const box = document.getElementById('imgPreview');
+  if(url){el.src=url;box.style.display='block';}
+  else{box.style.display='none';}
+}
+{% if product and product.image_url %}previewImg('{{ product.image_url }}');{% endif %}
+
+function previewFields(){
+  const raw = document.querySelector('[name=custom_fields]').value.trim();
+  if(!raw){document.getElementById('fieldPreview').innerHTML='';return;}
+  let html = '<div style="background:var(--card2);padding:14px;border-radius:8px;margin-bottom:12px">';
+  html += '<p style="font-size:.75rem;color:var(--muted);margin-bottom:10px">👁️ Field Preview:</p>';
+  raw.split('\n').forEach(line=>{
+    const parts = line.split('|').map(s=>s.trim());
+    if(parts.length<2) return;
+    const label=parts[0], type=parts[1], req=parts[2]==='yes';
+    html+=`<div style="margin-bottom:10px">
+      <label style="font-size:.78rem;color:var(--muted);display:block;margin-bottom:4px">${label}${req?' <span style="color:var(--red)">*</span>':''}</label>
+      <input type="text" class="form-control" placeholder="${label}" disabled style="opacity:.6"/>
+    </div>`;
+  });
+  html+='</div>';
+  document.getElementById('fieldPreview').innerHTML=html;
+}
+</script>
+{% endblock %}
+{% endblock %}

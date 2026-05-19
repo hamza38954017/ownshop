@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Edit User{% endblock %}
+{% block page_title %}✏️ Edit User{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Edit User</h2>
+  <a href="{{ url_for('users') }}" class="btn btn-outline"><i class="fa-solid fa-arrow-left"></i> Back</a>
+</div>
+<div style="max-width:560px">
+  <div class="form-card">
+    <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">👤 User Info</h3>
+    <form method="POST">
+      <div class="form-group">
+        <label class="form-label">Full Name</label>
+        <input name="full_name" class="form-control" value="{{ user.full_name or '' }}"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Wallet Balance (₹)</label>
+        <input name="wallet" type="number" step="0.01" class="form-control" value="{{ user.wallet or 0 }}"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Verified</label>
+        <select name="verified" class="form-control">
+          <option value="1" {% if user.verified %}selected{% endif %}>✅ Yes</option>
+          <option value="0" {% if not user.verified %}selected{% endif %}>❌ No</option>
+        </select>
+      </div>
+      <div style="background:var(--card2);border-radius:8px;padding:14px;margin-bottom:20px;font-size:.82rem;line-height:2">
+        <div>🆔 Chat ID: <b>{{ cid }}</b></div>
+        <div>📱 Telegram ID: <b>{{ user.telegram_userid or '—' }}</b></div>
+        <div>🔗 Refer Code: <code>{{ user.refer_code or '—' }}</code></div>
+        <div>🛍️ Orders: <b>{{ user.purchase_count or 0 }}</b></div>
+        <div>💸 Total Spent: <b>₹{{ user.total_spent or 0 }}</b></div>
+        <div>👥 Referrals: <b>{{ user.refer_count or 0 }}</b></div>
+        <div>✅ Verified Refs: <b>{{ user.verified_refer or 0 }}</b></div>
+        <div>💰 Total Earned: <b>₹{{ user.total_earned or 0 }}</b></div>
+        <div>🕐 Joined: <b>{{ (user.created_at or '')[:10] }}</b></div>
+        <div>🕐 Last Seen: <b>{{ (user.last_seen or '')[:16].replace('T',' ') }}</b></div>
+      </div>
+      <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save Changes</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
