@@ -46,7 +46,7 @@
         </td>
         <td>
           <div style="font-size:.82rem;max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-            {{ o.product_name or (o.items|length|string + ' items' if o.items else '—') }}
+            {{ o.product_name or (o.get('items')|length|string + ' items' if o.get('items') else '—') }}
           </div>
           {% if o.uid %}<div style="font-size:.72rem;color:var(--muted)">UID: {{ o.uid }}</div>{% endif %}
         </td>
