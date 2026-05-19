@@ -453,15 +453,18 @@ def broadcast():
     if request.method == "POST":
         text      = request.form.get("message","").strip()
         image_url = request.form.get("image_url","").strip()
-        try:
-            import bot as telegram_bot
-            ok, fail = telegram_bot.broadcast_message(
-                text=text or None,
-                image_url=image_url or None
-            )
-            result = {"ok": ok, "fail": fail}
-        except Exception as e:
-            result = {"error": str(e)}
+        if not text and not image_url:
+            result = {"error": "Please enter a message or image URL."}
+        else:
+            try:
+                import bot as telegram_bot
+                ok, fail = telegram_bot.broadcast_message(
+                    text=text or None,
+                    image_url=image_url or None
+                )
+                result = {"ok": ok, "fail": fail}
+            except Exception as e:
+                result = {"error": str(e)}
     return render_template("broadcast.html", result=result)
 
 # ─────────────────────────────────────────────────────────────────────────────
