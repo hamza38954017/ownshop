@@ -25,7 +25,7 @@
 <div class="table-card">
   <div class="table-header">
     <h3>{{ orders|length }} order(s) found</h3>
-    <span style="font-size:.8rem;color:var(--muted)">Total: ₹{{ "%.2f"|format(orders|sum(attribute='price')|float + orders|sum(attribute='total')|float) }}</span>
+    <span style="font-size:.8rem;color:var(--muted)">Total: ₹{{ "%.2f"|format(orders|sum(attribute='price')|float) }}</span>
   </div>
   <div class="table-wrap">
     <table>
