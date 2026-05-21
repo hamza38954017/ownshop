@@ -95,6 +95,8 @@
           {% if m.type == 'photo' %}
             {% if m.file_url %}
               <img src="{{ m.file_url }}" alt="image" onclick="window.open(this.src,'_blank')"/>
+            {% elif m.image_url %}
+              <img src="{{ m.image_url }}" alt="image" onclick="window.open(this.src,'_blank')"/>
             {% endif %}
             {% if m.text %}<div>{{ m.text }}</div>{% endif %}
           {% elif m.image_url %}
@@ -188,7 +190,7 @@ function previewImg(url){
   else img.style.display='none';
 }
 
-// Send message
+// Send message  — reloads on success so the sent bubble appears immediately
 async function sendMsg(){
   const text=document.getElementById('msgInput').value.trim();
   const img=document.getElementById('imgUrlInput').value.trim();
@@ -204,12 +206,8 @@ async function sendMsg(){
     const r=await fetch(`/support/${CID}/send`,{method:'POST',body:fd});
     const d=await r.json();
     if(d.ok){
-      document.getElementById('msgInput').value='';
-      document.getElementById('imgUrlInput').value='';
-      document.getElementById('imgPreview').style.display='none';
       status.textContent='✅ Sent';
-      setTimeout(()=>{status.textContent='';},2000);
-      pollMessages();
+      location.reload();   // reload so the sent bubble renders immediately
     }else{
       status.textContent='❌ '+( d.error||'Failed');
     }
@@ -222,16 +220,16 @@ async function pollMessages(){
     const r=await fetch(`/support/${CID}/messages`);
     const msgs=await r.json();
     if(msgs.length!==lastMsgCount){
-      lastMsgCount=msgs.length;
+      // Must update lastMsgCount AFTER renderMessages, otherwise
+      // the reload check inside renderMessages sees equal counts and does nothing
       renderMessages(msgs);
+      lastMsgCount=msgs.length;
     }
   }catch(e){}
 }
 
 function renderMessages(msgs){
-  const wasAtBottom=box.scrollHeight-box.clientHeight<=box.scrollTop+60;
-  // Simple approach: reload if new messages (avoids complex DOM diffing)
-  if(msgs.length>lastMsgCount) location.reload();
+  location.reload();
 }
 
 setInterval(pollMessages,4000);
