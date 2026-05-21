@@ -30,9 +30,19 @@ def inject_globals():
 @app.route("/login",methods=["GET","POST"])
 def login():
     if request.method=="POST":
-        if (request.form.get("username")==ADMIN_USERNAME() and
-                request.form.get("password")==ADMIN_PASSWORD()):
-            session["admin"]=True; return redirect(url_for("dashboard"))
+        entered_user = request.form.get("username","").strip()
+        entered_pass = request.form.get("password","").strip()
+        # Read credentials — env var first, then Firebase, then hardcoded default
+        import os as _os
+        valid_user = (_os.environ.get("ADMIN_USERNAME","").strip()
+                      or fb.get_setting("admin_username","")
+                      or "admin")
+        valid_pass = (_os.environ.get("ADMIN_PASSWORD","").strip()
+                      or fb.get_setting("admin_password","")
+                      or "admin123")
+        if entered_user == valid_user and entered_pass == valid_pass:
+            session["admin"] = True
+            return redirect(url_for("dashboard"))
         flash("Invalid credentials","danger")
     return render_template("login.html")
 
@@ -506,19 +516,34 @@ def kimipay_callback():
 @login_required
 def settings():
     if request.method=="POST":
-        keys = [
+        # Keys saved always (blank is valid for these)
+        normal_keys = [
             "bot_token","bot_username","support_username",
-            "payment_link","rules_text","admin_username","admin_password",
+            "payment_link","rules_text",
             "panel_name","panel_copyright",
             "refer_commission","min_deposit","min_withdrawal","max_withdrawal",
-            "kimipay_app_id","kimipay_api_key",
+            "kimipay_app_id","kimipay_api_key","kimipay_base_url",
             "notify_chat_ids",
         ]
-        for k in keys:
+        for k in normal_keys:
             val = request.form.get(k,"")
-            if val is not None:
-                fb.set_setting(k,val)
-        flash("Settings saved","success"); return redirect(url_for("settings"))
+            fb.set_setting(k, val)
+
+        # Admin username — only save if not blank
+        new_username = request.form.get("admin_username","").strip()
+        if new_username:
+            fb.set_setting("admin_username", new_username)
+
+        # Admin password — only save if not blank (blank = keep current)
+        new_password = request.form.get("admin_password","").strip()
+        if new_password:
+            fb.set_setting("admin_password", new_password)
+        else:
+            flash("Settings saved (password unchanged)","success")
+            return redirect(url_for("settings"))
+
+        flash("Settings saved","success")
+        return redirect(url_for("settings"))
     cfg = fb.get("config") or {}
     return render_template("settings.html",cfg=cfg)
 
