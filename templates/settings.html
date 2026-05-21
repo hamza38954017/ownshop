@@ -14,6 +14,19 @@
       <div class="form-hint">From @BotFather. Stored in Firebase.</div>
     </div>
     <div class="form-group">
+      <label class="form-label">Support Bot Token</label>
+      <input name="support_bot_token" class="form-control" value="{{ cfg.get('support_bot_token','') }}" type="password" placeholder="Support bot token from @BotFather"/>
+      <div class="form-hint">Separate bot for customer support chat.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Support Greeting Message</label>
+      <textarea name="support_greeting" class="form-control" rows="3" placeholder="Welcome message shown to users who start the support bot">{{ cfg.get('support_greeting','') }}</textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Support Auto-Reply (optional)</label>
+      <input name="support_auto_reply" class="form-control" value="{{ cfg.get('support_auto_reply','') }}" placeholder="e.g. Thanks! We'll reply shortly."/>
+    </div>
+    <div class="form-group">
       <label class="form-label">Bot Username</label>
       <input name="bot_username" class="form-control" value="{{ cfg.get('bot_username','') }}" placeholder="YourBotUsername"/>
     </div>
