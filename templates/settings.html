@@ -2,49 +2,111 @@
 {% block title %}Settings{% endblock %}
 {% block page_title %}⚙️ Settings{% endblock %}
 {% block content %}
-<div class="page-header"><h2>Store Settings</h2></div>
-<div style="max-width:700px">
-  <form method="POST">
-    <div class="form-card" style="margin-bottom:20px">
-      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">💰 Referral Settings</h3>
-      <div class="form-group">
-        <label class="form-label">Refer Commission (%)</label>
-        <input name="commission" type="number" min="0" max="100" step="0.1"
-               class="form-control" value="{{ commission }}" style="max-width:200px"/>
-        <div class="form-hint">Users earn this % of every purchase made by their referrals.</div>
-      </div>
-    </div>
+<form method="POST">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:1000px">
 
-    <div class="form-card" style="margin-bottom:20px">
-      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">💳 Payment Settings</h3>
-      <div class="form-group">
-        <label class="form-label">Payment Link (UPI / Gateway URL)</label>
-        <input name="payment_link" class="form-control" value="{{ payment_link }}"
-               placeholder="https://razorpay.com/pay/... or upi://pay?..."/>
-        <div class="form-hint">This link is shown to users when they click "Pay Now".</div>
-      </div>
+<div>
+  <div class="form-card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">🤖 Bot Configuration</h3>
+    <div class="form-group">
+      <label class="form-label">Bot Token</label>
+      <input name="bot_token" class="form-control" value="{{ cfg.get('bot_token','') }}" placeholder="1234567890:AAF..."/>
+      <div class="form-hint">From @BotFather. Stored in Firebase.</div>
     </div>
-
-    <div class="form-card" style="margin-bottom:20px">
-      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">📞 Support Settings</h3>
-      <div class="form-group">
-        <label class="form-label">Support Username</label>
-        <input name="support_username" class="form-control" value="{{ support_username }}"
-               placeholder="@hamzadeveloper3895"/>
-      </div>
+    <div class="form-group">
+      <label class="form-label">Bot Username</label>
+      <input name="bot_username" class="form-control" value="{{ cfg.get('bot_username','') }}" placeholder="YourBotUsername"/>
     </div>
-
-    <div class="form-card" style="margin-bottom:20px">
-      <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">📋 Bot Rules Text</h3>
-      <div class="form-group">
-        <label class="form-label">Rules (Markdown supported)</label>
-        <textarea name="rules_text" class="form-control" style="min-height:220px;font-family:monospace;font-size:.82rem">{{ rules_text }}</textarea>
-      </div>
+    <div class="form-group">
+      <label class="form-label">Support Username</label>
+      <input name="support_username" class="form-control" value="{{ cfg.get('support_username','') }}" placeholder="@support"/>
     </div>
+  </div>
 
-    <button type="submit" class="btn btn-primary">
-      <i class="fa-solid fa-save"></i> Save All Settings
-    </button>
-  </form>
+  <div class="form-card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">💳 KimiPay</h3>
+    <div class="form-group">
+      <label class="form-label">App ID</label>
+      <input name="kimipay_app_id" class="form-control" value="{{ cfg.get('kimipay_app_id','') }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">API Key</label>
+      <input name="kimipay_api_key" class="form-control" value="{{ cfg.get('kimipay_api_key','') }}" type="password"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Callback URL (set in KimiPay dashboard)</label>
+      <input class="form-control" value="{{ request.host_url }}callback/kimipay" readonly
+        onclick="this.select()" style="cursor:pointer;font-family:monospace;font-size:.78rem"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Fallback Payment Link</label>
+      <input name="payment_link" class="form-control" value="{{ cfg.get('payment_link','') }}" placeholder="https://..."/>
+      <div class="form-hint">Used if KimiPay is unavailable.</div>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">🔔 Admin Notifications</h3>
+    <div class="form-group">
+      <label class="form-label">Notify Chat IDs (comma separated)</label>
+      <input name="notify_chat_ids" class="form-control" value="{{ cfg.get('notify_chat_ids','') }}" placeholder="123456789,987654321"/>
+      <div class="form-hint">These Telegram IDs receive order/deposit/withdrawal alerts.</div>
+    </div>
+  </div>
 </div>
+
+<div>
+  <div class="form-card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">🎨 Admin Panel</h3>
+    <div class="form-group">
+      <label class="form-label">Panel Name</label>
+      <input name="panel_name" class="form-control" value="{{ cfg.get('panel_name','HamzaShop Admin') }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Copyright Text</label>
+      <input name="panel_copyright" class="form-control" value="{{ cfg.get('panel_copyright','© 2026 HamzaShop') }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Admin Username</label>
+      <input name="admin_username" class="form-control" value="{{ cfg.get('admin_username','admin') }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Admin Password</label>
+      <input name="admin_password" class="form-control" type="password" placeholder="Leave blank to keep current"/>
+    </div>
+  </div>
+
+  <div class="form-card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">💰 Finance</h3>
+    <div class="form-group">
+      <label class="form-label">Refer Commission (%)</label>
+      <input name="refer_commission" type="number" step="0.1" min="0" max="100" class="form-control" value="{{ cfg.get('refer_commission',10) }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Min Deposit (₹)</label>
+      <input name="min_deposit" type="number" min="1" class="form-control" value="{{ cfg.get('min_deposit',1000) }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Min Withdrawal (₹)</label>
+      <input name="min_withdrawal" type="number" min="1" class="form-control" value="{{ cfg.get('min_withdrawal',100) }}"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Max Withdrawal (₹)</label>
+      <input name="max_withdrawal" type="number" class="form-control" value="{{ cfg.get('max_withdrawal',50000) }}"/>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">📋 Bot Rules Text</h3>
+    <div class="form-group">
+      <textarea name="rules_text" class="form-control" style="min-height:180px;font-family:monospace;font-size:.78rem">{{ cfg.get('rules_text','') }}</textarea>
+    </div>
+  </div>
+</div>
+
+</div>
+<div style="margin-top:18px">
+  <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save All Settings</button>
+</div>
+</form>
 {% endblock %}
