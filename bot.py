@@ -1,56 +1,60 @@
 """
-HamzaShop Telegram Bot  –  bot.py
-All features: shop, cart, wallet, refer&earn, history, admin broadcast, etc.
+HamzaShop Telegram Bot — bot.py
+All credentials stored in Firebase under /config
 """
-
 import telebot
 from telebot import types
-import datetime, random, string, time, re
-from config import *
+import datetime, random, string, time, re, threading
 import firebase_helper as fb
+import kimipay
+from config import (BOT_TOKEN, BOT_USERNAME, SUPPORT_USERNAME, PAYMENT_LINK,
+                    RULES_TEXT, MIN_DEPOSIT, MIN_WITHDRAWAL, MAX_WITHDRAWAL,
+                    REFER_COMMISSION, NOTIFY_CHAT_IDS)
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+def make_bot():
+    token = BOT_TOKEN()
+    if not token:
+        print("⚠️ BOT_TOKEN not set in Firebase /config/bot_token"); return None
+    return telebot.TeleBot(token, parse_mode=None)
 
-# ─────────────────────────────────────────────
-# IN-MEMORY STATE  (chat_id → state/temp data)
-# ─────────────────────────────────────────────
-user_states   = {}   # chat_id: "state_string"
-user_temp     = {}   # chat_id: {arbitrary temp dict}
+bot = make_bot()
+
+# ── State (in-memory per gunicorn worker) ────────────────────────────────────
+user_states = {}
+user_temp   = {}
 
 def get_state(cid):   return user_states.get(str(cid))
-def set_state(cid, s): user_states[str(cid)] = s
-def clear_state(cid): user_states.pop(str(cid), None); user_temp.pop(str(cid), None)
-def get_temp(cid):    return user_temp.get(str(cid), {})
-def set_temp(cid, d): user_temp[str(cid)] = d
-def upd_temp(cid, d): user_temp.setdefault(str(cid), {}).update(d)
+def set_state(cid,s): user_states[str(cid)] = s
+def clear_state(cid): user_states.pop(str(cid),None); user_temp.pop(str(cid),None)
+def get_temp(cid):    return user_temp.get(str(cid),{})
+def set_temp(cid,d):  user_temp[str(cid)] = d
+def upd_temp(cid,d):  user_temp.setdefault(str(cid),{}).update(d)
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
-def now_str(): return datetime.datetime.now().isoformat()
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def now_str(): return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def now_dt():  return datetime.datetime.now()
+def gen_code(n=8): return "".join(random.choices(string.ascii_uppercase+string.digits,k=n))
+def gen_order_id(): return "ORD"+"".join(random.choices(string.digits,k=8))
+def fmt_price(p):
+    try: return f"₹{float(p):,.0f}"
+    except: return f"₹{p}"
 
-def gen_code(n=8):
-    return "".join(random.choices(string.ascii_uppercase + string.digits, k=n))
+def paginate(items,page,per_page=5):
+    start=page*per_page
+    return items[start:start+per_page], len(items)>start+per_page, page>0
 
-def gen_order_id():
-    return "ORD" + "".join(random.choices(string.digits, k=8))
+def send_notify(text):
+    """Send to all admin notification chat IDs."""
+    for cid in NOTIFY_CHAT_IDS():
+        try: bot.send_message(cid, text, parse_mode="Markdown")
+        except: pass
 
+def send_msg(cid, text, **kw):
+    try: bot.send_message(cid, text, parse_mode="Markdown", **kw)
+    except Exception as e: print(f"[MSG] {cid}: {e}")
 
-
-def get_commission():
-    return fb.get_setting("refer_commission", DEFAULT_REFER_COMMISSION)
-
-def fmt_price(p): return f"₹{p:,.0f}"
-
-def paginate(items, page, per_page=5):
-    start = page * per_page
-    return items[start:start+per_page], len(items) > start + per_page, page > 0
-
-# ─────────────────────────────────────────────
-# USER  (create / fetch)
-# ─────────────────────────────────────────────
-def get_user(cid):
-    return fb.get(f"users/{cid}")
+# ── User helpers ──────────────────────────────────────────────────────────────
+def get_user(cid): return fb.get(f"users/{cid}")
 
 def ensure_user(message, referred_by=None):
     cid = str(message.chat.id)
@@ -58,23 +62,20 @@ def ensure_user(message, referred_by=None):
     if u:
         fb.patch(f"users/{cid}", {"last_seen": now_str()})
         return u, False
-    # New user
     rc = gen_code()
-    while fb.get(f"refer_codes/{rc}"):
-        rc = gen_code()
+    while fb.get(f"refer_codes/{rc}"): rc = gen_code()
     fn = (message.from_user.first_name or "").strip()
     ln = (message.from_user.last_name  or "").strip()
     data = {
-        "chat_id": cid, "full_name": f"{fn} {ln}".strip(),
-        "first_name": fn, "last_name": ln,
-        "username": message.from_user.username or "",
-        "telegram_userid": message.from_user.id,
-        "refer_code": rc, "referred_by": referred_by or "",
-        "wallet": 0, "total_earned": 0,
-        "verified_refer": 0, "pending_refer": 0, "refer_count": 0,
-        "total_spent": 0, "total_deposit": 0,
-        "purchase_count": 0, "verified": False,
-        "created_at": now_str(), "last_seen": now_str(),
+        "chat_id":cid, "full_name":f"{fn} {ln}".strip(),
+        "first_name":fn, "last_name":ln,
+        "username":message.from_user.username or "",
+        "refer_code":rc, "referred_by":referred_by or "",
+        "wallet":0, "total_earned":0,
+        "verified_refer":0, "pending_refer":0, "refer_count":0,
+        "total_spent":0, "total_deposit":0,
+        "purchase_count":0, "verified":True,
+        "created_at":now_str(), "last_seen":now_str(),
     }
     fb.put(f"users/{cid}", data)
     fb.put(f"refer_codes/{rc}", cid)
@@ -82,25 +83,34 @@ def ensure_user(message, referred_by=None):
         ref = fb.get(f"users/{referred_by}")
         if ref:
             fb.patch(f"users/{referred_by}", {
-                "pending_refer": ref.get("pending_refer", 0) + 1,
-                "refer_count":   ref.get("refer_count",   0) + 1,
+                "pending_refer": ref.get("pending_refer",0)+1,
+                "refer_count":   ref.get("refer_count",0)+1,
             })
             fb.put(f"referrals/{referred_by}/{cid}", {
-                "chat_id": cid, "name": data["full_name"],
-                "status": "pending", "joined_at": now_str(), "earned": 0
+                "chat_id":cid,"name":data["full_name"],
+                "status":"pending","joined_at":now_str(),"earned":0
             })
+            send_msg(referred_by,
+                f"🎉 *New Referral!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *{data['full_name']}* just joined using your referral link!\n"
+                f"🤝 They'll earn you commission on every purchase.\n"
+                f"💸 Keep sharing your link!")
     return data, True
 
-# ─────────────────────────────────────────────
-# KEYBOARDS
-# ─────────────────────────────────────────────
+# ── Keyboards ─────────────────────────────────────────────────────────────────
 def kb_main():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     m.add("🏠 Home", "🛍️ Shop")
-    m.add("🛒 My Cart", "📜 History")
-    m.add("👥 Refer & Earn", "👤 My Refer")
+    m.add("🛒 My Cart", "💳 Transactions")
+    m.add("👥 Refer & Earn", "👤 My Referrals")
     m.add("💰 Wallet", "📋 Rules")
-    m.add("📞 Customer Support")
+    m.add("📞 Support")
+    return m
+
+def kb_cancel():
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.add("❌ Cancel")
     return m
 
 def kb_categories():
@@ -110,22 +120,11 @@ def kb_categories():
     for cid, cd in cats.items():
         if cd.get("active", True):
             btns.append(types.InlineKeyboardButton(
-                f"{cd.get('emoji','🏷️')} {cd['name']}", callback_data=f"cat_{cid}"))
-    # Built-in defaults if no categories in DB yet
-    defaults = [
-        ("💎 FF Diamond", "cat_ff_diamond"),
-        ("🎮 PUBG UC",    "cat_pubg_uc"),
-        ("📱 Mobile",     "cat_mobile"),
-        ("💻 Laptop",     "cat_laptop"),
-        ("🎁 Other",      "cat_other"),
-    ]
-    seen = {b.callback_data for b in btns}
-    for name, cbd in defaults:
-        if cbd not in seen:
-            btns.append(types.InlineKeyboardButton(name, callback_data=cbd))
-    for i in range(0, len(btns), 2):
-        row = btns[i:i+2]
-        m.row(*row)
+                f"{cd.get('emoji','🏷️')} {cd['name']}",
+                callback_data=f"cat_{cid}"))
+    if not btns:
+        btns.append(types.InlineKeyboardButton("🏪 No categories yet", callback_data="home"))
+    for i in range(0,len(btns),2): m.row(*btns[i:i+2])
     m.add(types.InlineKeyboardButton("🏠 Home", callback_data="home"))
     return m
 
@@ -134,976 +133,983 @@ def kb_back(cbd="shop"):
     m.add(types.InlineKeyboardButton("🔙 Back", callback_data=cbd))
     return m
 
-def kb_product_actions(product_id, category):
-    m = types.InlineKeyboardMarkup(row_width=2)
-    m.add(
-        types.InlineKeyboardButton("🛒 Add to Cart", callback_data=f"addcart_{product_id}"),
-        types.InlineKeyboardButton("⚡ Buy Now",     callback_data=f"buynow_{product_id}"),
-    )
-    m.add(types.InlineKeyboardButton("🔙 Back", callback_data=f"cat_{category}"))
-    return m
+# ── Guard ─────────────────────────────────────────────────────────────────────
+def _guard(msg):
+    cid = str(msg.chat.id)
+    if not fb.get(f"users/{cid}"):
+        cmd_start(msg); return False
+    fb.patch(f"users/{cid}", {"last_seen":now_str()})
+    return True
 
-# ─────────────────────────────────────────────
-# PRODUCT LISTING  (paginated)
-# ─────────────────────────────────────────────
-def send_products(cid, mid, category, page=0):
-    products = fb.get(f"products") or {}
-    # Strip "cat_" prefix — admin stores category as raw Firebase key, bot uses "cat_<key>"
-    cat_key = category[4:] if category.startswith("cat_") else category
-    cat_products = [(pid, pd) for pid, pd in products.items()
-                    if pd.get("category") == cat_key and pd.get("active", True)]
-    if not cat_products:
-        try:
-            bot.edit_message_text("❌ No products found in this category.", cid, mid,
-                                  reply_markup=kb_back("shop"))
-        except: pass
-        return
+def _guard_cancel(msg):
+    """Returns True if message is cancel command."""
+    return msg.text and msg.text.strip() == "❌ Cancel"
 
-    items, has_next, has_prev = paginate(cat_products, page, per_page=5)
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for pid, pd in items:
-        label = f"{pd.get('name','Product')} — {fmt_price(pd.get('price',0))}"
-        markup.add(types.InlineKeyboardButton(label, callback_data=f"prod_{pid}"))
-
-    nav = []
-    # Use | as separator so Firebase keys (containing -) don't break the split
-    if has_prev: nav.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"pg|{category}|{page-1}"))
-    if has_next: nav.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"pg|{category}|{page+1}"))
-    if nav: markup.row(*nav)
-    markup.add(types.InlineKeyboardButton("🔙 Categories", callback_data="shop"))
-
-    cat_names = {
-        "cat_ff_diamond": "💎 FF Diamond",
-        "cat_pubg_uc":    "🎮 PUBG UC",
-        "cat_mobile":     "📱 Mobile",
-        "cat_laptop":     "💻 Laptop",
-        "cat_other":      "🎁 Other",
-    }
-    title = cat_names.get(category, category)
-    text = (f"🏪 *{title}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 *{len(cat_products)}* product(s) found\n"
-            f"📄 Page {page+1}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👇 Select a product:")
-    try:
-        bot.edit_message_text(text, cid, mid, parse_mode="Markdown", reply_markup=markup)
-    except:
-        bot.send_message(cid, text, parse_mode="Markdown", reply_markup=markup)
-
-# ─────────────────────────────────────────────
-# /start
-# ─────────────────────────────────────────────
+# ── /start ────────────────────────────────────────────────────────────────────
 @bot.message_handler(commands=["start"])
 def cmd_start(msg):
-    cid  = str(msg.chat.id)
+    cid = str(msg.chat.id)
     args = msg.text.split()
     ref_by = None
     if len(args) > 1:
-        code = args[1]
-        referrer = fb.get(f"refer_codes/{code}")
-        if referrer and str(referrer) != cid:
-            ref_by = str(referrer)
+        ref = fb.get(f"refer_codes/{args[1]}")
+        if ref and str(ref) != cid: ref_by = str(ref)
 
     u, is_new = ensure_user(msg, ref_by)
-    # Mark verified immediately — no channel join required
-    if not u.get("verified"):
-        fb.patch(f"users/{cid}", {"verified": True})
-
-    if is_new:
-        bot.send_message(
-            cid,
-            f"🎉 *Welcome to HamzaShop!*\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Hello *{u.get('first_name','Friend')}*! 👋\n\n"
-            f"🛍️ *FF Diamond* | *PUBG UC* | *Mobile* | *Laptop*\n"
-            f"💰 Wallet: ₹*{u.get('wallet', 0)}*\n"
-            f"🤝 Refer & Earn *10%* commission!\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👇 Use the menu below:",
-            parse_mode="Markdown", reply_markup=kb_main())
-    else:
-        send_home(msg)
-    # Always show shop categories after welcome/home
-    bot.send_message(cid,
-        "🛍️ *Shop — Categories*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "👇 Choose a category:",
-        parse_mode="Markdown", reply_markup=kb_categories())
-
-
-
-# ─────────────────────────────────────────────
-# HOME
-# ─────────────────────────────────────────────
-def send_home(msg_or_cid, message_id=None):
-    if isinstance(msg_or_cid, str):
-        cid = msg_or_cid; fname = "Friend"
-    else:
-        cid = str(msg_or_cid.chat.id)
-        fname = msg_or_cid.from_user.first_name or "Friend"
-    u = get_user(cid)
-    if not u: return
-    fname = u.get("first_name", fname)
-    text = (
-        f"🏠 *Home*\n"
+    greet = (
+        f"🎉 *Welcome to the Shop!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👋 Hello *{fname}*!\n\n"
-        f"💰 Wallet: ₹*{u.get('wallet',0):,.2f}*\n"
-        f"🛒 Orders: *{u.get('purchase_count',0)}*\n"
-        f"🤝 Referrals: *{u.get('refer_count',0)}*\n"
+        f"👋 Hello *{u.get('first_name','Friend')}*!\n\n"
+        f"🛍️ Browse products, top up games,\n"
+        f"💰 earn wallet balance through referrals!\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💵 Wallet: *{fmt_price(u.get('wallet',0))}*\n"
+        f"🤝 Commission: *{REFER_COMMISSION()}%* per referral purchase\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"👇 Use the menu below:"
+    ) if is_new else (
+        f"🏠 *Welcome Back!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👋 Hey *{u.get('first_name','Friend')}*!\n"
+        f"💵 Wallet: *{fmt_price(u.get('wallet',0))}*\n"
+        f"🛒 Orders: *{u.get('purchase_count',0)}*"
     )
-    # Always send with Reply keyboard so menu buttons are always visible
-    bot.send_message(cid, text, parse_mode="Markdown", reply_markup=kb_main())
+    send_msg(cid, greet, reply_markup=kb_main())
+    # show shop
+    bot.send_message(cid,
+        "🛍️ *Shop — Choose a Category*\n━━━━━━━━━━━━━━━━━━━━━\n👇 Select below:",
+        parse_mode="Markdown", reply_markup=kb_categories())
 
-@bot.message_handler(func=lambda m: m.text == "🏠 Home")
+# ── Home ──────────────────────────────────────────────────────────────────────
+def send_home(cid):
+    u = get_user(cid)
+    if not u: return
+    send_msg(cid,
+        f"🏠 *Home*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *{u.get('full_name','Friend')}*\n"
+        f"💵 Wallet: *{fmt_price(u.get('wallet',0))}*\n"
+        f"🛒 Orders: *{u.get('purchase_count',0)}*\n"
+        f"🤝 Referrals: *{u.get('refer_count',0)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━",
+        reply_markup=kb_main())
+
+@bot.message_handler(func=lambda m: m.text=="🏠 Home")
 def msg_home(msg):
     if not _guard(msg): return
-    send_home(msg)
+    send_home(str(msg.chat.id))
 
-@bot.callback_query_handler(func=lambda c: c.data == "home")
+@bot.callback_query_handler(func=lambda c: c.data=="home")
 def cb_home(c):
-    cid = str(c.message.chat.id)
-    send_home(cid, c.message.message_id)
+    bot.answer_callback_query(c.id)
+    send_home(str(c.message.chat.id))
 
-# ─────────────────────────────────────────────
-# GUARD
-# ─────────────────────────────────────────────
-def _guard(msg):
-    cid = str(msg.chat.id)
-    u = fb.get(f"users/{cid}")
-    if not u:
-        cmd_start(msg); return False
-    fb.patch(f"users/{cid}", {"last_seen": now_str()})
-    return True
-
-# ─────────────────────────────────────────────
-# SHOP / CATEGORIES
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text in ("🛍️ Shop","🛒 Shop Now","🛍️ Shop Now"))
+# ── Shop / Categories ─────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text in ("🛍️ Shop","🛒 Shop Now"))
 def msg_shop(msg):
     if not _guard(msg): return
     bot.send_message(str(msg.chat.id),
-        "🛍️ *Shop — Categories*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "👇 Choose a category:",
+        "🛍️ *Shop — Categories*\n━━━━━━━━━━━━━━━━━━━━━\n👇 Choose:",
         parse_mode="Markdown", reply_markup=kb_categories())
 
-@bot.callback_query_handler(func=lambda c: c.data == "shop")
+@bot.callback_query_handler(func=lambda c: c.data=="shop")
 def cb_shop(c):
-    cid = str(c.message.chat.id)
+    bot.answer_callback_query(c.id)
     try:
-        bot.edit_message_text(
-            "🛍️ *Shop — Categories*\n"
-            "━━━━━━━━━━━━━━━━━━━━━\n"
-            "👇 Choose a category:",
-            cid, c.message.message_id,
+        bot.edit_message_text("🛍️ *Shop — Categories*\n━━━━━━━━━━━━━━━━━━━━━\n👇 Choose:",
+            str(c.message.chat.id), c.message.message_id,
             parse_mode="Markdown", reply_markup=kb_categories())
     except:
-        bot.send_message(cid,
-            "🛍️ *Shop — Categories*",
-            parse_mode="Markdown", reply_markup=kb_categories())
+        bot.send_message(str(c.message.chat.id),
+            "🛍️ *Shop — Categories*", parse_mode="Markdown", reply_markup=kb_categories())
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("cat_"))
 def cb_category(c):
-    category = c.data  # e.g. "cat_ff_diamond"
+    bot.answer_callback_query(c.id)
     cid = str(c.message.chat.id)
+    cat_key = c.data[4:]  # strip "cat_"
+    # Fetch category name from DB
+    cat_data = fb.get(f"categories/{cat_key}") or {}
+    cat_name = f"{cat_data.get('emoji','🏷️')} {cat_data.get('name', cat_key)}" if cat_data else cat_key
+    send_products(cid, c.message.message_id, cat_key, 0, cat_name)
 
-    # Track views
-    fb.patch(f"category_views/{category}", {"views": (fb.get(f"category_views/{category}") or {}).get("views", 0) + 1})
-
-    if category == "cat_mobile":
-        # Sub-brands
-        brands = fb.get("mobile_brands") or {"samsung": "Samsung 📱", "apple": "Apple 🍎", "vivo": "Vivo 📲"}
-        m = types.InlineKeyboardMarkup(row_width=2)
-        for bid, bname in brands.items():
-            m.add(types.InlineKeyboardButton(bname, callback_data=f"brand_{bid}"))
-        m.add(types.InlineKeyboardButton("🔙 Categories", callback_data="shop"))
+def send_products(cid, mid, cat_key, page=0, cat_name="Products"):
+    products = fb.get("products") or {}
+    cat_products = [(pid,pd) for pid,pd in products.items()
+                    if pd.get("category")==cat_key and pd.get("active",True)]
+    if not cat_products:
         try:
-            bot.edit_message_text("📱 *Mobile — Choose Brand*\n━━━━━━━━━━━━━━━━━━━━━",
-                cid, c.message.message_id, parse_mode="Markdown", reply_markup=m)
+            bot.edit_message_text(
+                f"🏪 *{cat_name}*\n━━━━━━━━━━━━━━━━━━━━━\n❌ No products in this category yet.",
+                cid, mid, parse_mode="Markdown", reply_markup=kb_back("shop"))
         except: pass
         return
 
-    send_products(cid, c.message.message_id, category)
+    items, has_next, has_prev = paginate(cat_products, page)
+    mk = types.InlineKeyboardMarkup(row_width=1)
+    for pid, pd in items:
+        stock = pd.get("stock",999)
+        stock_tag = f" ✅" if stock>0 else " ❌"
+        mk.add(types.InlineKeyboardButton(
+            f"{pd.get('name','?')} — {fmt_price(pd.get('price',0))}{stock_tag}",
+            callback_data=f"prod_{pid}~{cat_key}"))
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("brand_"))
-def cb_brand(c):
-    brand = c.data[6:]
-    cid = str(c.message.chat.id)
-    send_products(cid, c.message.message_id, f"cat_mobile_{brand}")
+    nav = []
+    if has_prev: nav.append(types.InlineKeyboardButton("⬅️ Prev", callback_data=f"pg|{cat_key}|{page-1}"))
+    if has_next: nav.append(types.InlineKeyboardButton("Next ➡️", callback_data=f"pg|{cat_key}|{page+1}"))
+    if nav: mk.row(*nav)
+    mk.add(types.InlineKeyboardButton("🔙 Categories", callback_data="shop"))
+
+    text = (f"🏪 *{cat_name}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 {len(cat_products)} product(s) | Page {page+1}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ = In stock  ❌ = Out of stock\n"
+            f"👇 Select a product:")
+    try:
+        bot.edit_message_text(text, cid, mid, parse_mode="Markdown", reply_markup=mk)
+    except:
+        bot.send_message(cid, text, parse_mode="Markdown", reply_markup=mk)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("pg|"))
 def cb_page(c):
-    _, category, page = c.data.split("|", 2)
-    send_products(str(c.message.chat.id), c.message.message_id, category, int(page))
+    bot.answer_callback_query(c.id)
+    _, cat_key, page = c.data.split("|",2)
+    cat_data = fb.get(f"categories/{cat_key}") or {}
+    cat_name = f"{cat_data.get('emoji','🏷️')} {cat_data.get('name',cat_key)}" if cat_data else cat_key
+    send_products(str(c.message.chat.id), c.message.message_id, cat_key, int(page), cat_name)
 
-# ─────────────────────────────────────────────
-# PRODUCT DETAIL
-# ─────────────────────────────────────────────
+# ── Product Detail ────────────────────────────────────────────────────────────
 @bot.callback_query_handler(func=lambda c: c.data.startswith("prod_"))
 def cb_product(c):
-    pid = c.data[5:]
+    bot.answer_callback_query(c.id)
+    # format: prod_<pid>~<cat_key>
+    payload = c.data[5:]
+    pid, cat_key = (payload.split("~",1)+[""])[:2]
     cid = str(c.message.chat.id)
     p = fb.get(f"products/{pid}")
     if not p:
-        bot.answer_callback_query(c.id, "❌ Product not found"); return
+        bot.answer_callback_query(c.id,"❌ Product not found",show_alert=True); return
 
-    # Track views
-    fb.patch(f"products/{pid}", {"views": p.get("views", 0) + 1})
-
-    cat = p.get("category", "cat_other")
-    fields = p.get("fields", [])  # custom fields list
+    fb.patch(f"products/{pid}",{"views":p.get("views",0)+1})
+    stock = p.get("stock",999)
 
     text = (
-        f"🏷️ *{p.get('name','Product')}*\n"
+        f"🏷️ *{p.get('name','')}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"📝 {p.get('description','')}\n\n"
         f"💰 Price: *{fmt_price(p.get('price',0))}*\n"
-        f"📦 Stock: {'✅ Available' if p.get('stock',1)>0 else '❌ Out of Stock'}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━"
+        f"📦 Stock: *{'✅ Available' if stock>0 else '❌ Out of Stock'}*"
+        + (f" ({stock})" if 0<stock<50 else "") +
+        f"\n━━━━━━━━━━━━━━━━━━━━━"
     )
-    # Add extra info for gaming topups
-    if "ff_diamond" in cat or "pubg" in cat:
-        text += f"\n🎮 *{p.get('game_info','')}*"
 
-    m = types.InlineKeyboardMarkup(row_width=2)
-    if p.get("stock", 1) > 0:
-        m.add(
-            types.InlineKeyboardButton("🛒 Add to Cart", callback_data=f"addcart_{pid}"),
+    mk = types.InlineKeyboardMarkup(row_width=2)
+    if stock > 0:
+        mk.add(
+            types.InlineKeyboardButton("🛒 Add to Cart", callback_data=f"addcart_{pid}~{cat_key}"),
             types.InlineKeyboardButton("⚡ Buy Now",     callback_data=f"buynow_{pid}"),
         )
-    m.add(types.InlineKeyboardButton("🔙 Back", callback_data=cat))
+    # Back goes to category list — store cat_key so back works
+    back_cb = f"cat_{cat_key}" if cat_key else "shop"
+    mk.add(types.InlineKeyboardButton("🔙 Back", callback_data=back_cb))
 
+    if p.get("image_url"):
+        try:
+            bot.send_photo(cid, p["image_url"], caption=text, parse_mode="Markdown", reply_markup=mk)
+            return
+        except: pass
     try:
-        if p.get("image_url"):
-            bot.send_photo(cid, p["image_url"], caption=text, parse_mode="Markdown", reply_markup=m)
-        else:
-            bot.edit_message_text(text, cid, c.message.message_id, parse_mode="Markdown", reply_markup=m)
+        bot.edit_message_text(text, cid, c.message.message_id, parse_mode="Markdown", reply_markup=mk)
     except:
-        bot.send_message(cid, text, parse_mode="Markdown", reply_markup=m)
+        bot.send_message(cid, text, parse_mode="Markdown", reply_markup=mk)
 
-# ─────────────────────────────────────────────
-# ADD TO CART
-# ─────────────────────────────────────────────
+# ── Add to Cart ───────────────────────────────────────────────────────────────
 @bot.callback_query_handler(func=lambda c: c.data.startswith("addcart_"))
 def cb_add_cart(c):
-    pid = c.data[8:]
+    payload = c.data[8:]
+    pid, cat_key = (payload.split("~",1)+[""])[:2]
     cid = str(c.message.chat.id)
     p = fb.get(f"products/{pid}")
     if not p:
-        bot.answer_callback_query(c.id, "❌ Product not found"); return
+        bot.answer_callback_query(c.id,"❌ Not found",show_alert=True); return
     cart = fb.get(f"carts/{cid}") or {}
     if pid in cart:
-        cart[pid]["qty"] = cart[pid].get("qty", 1) + 1
+        cart[pid]["qty"] = cart[pid].get("qty",1)+1
     else:
-        cart[pid] = {
-            "product_id": pid, "name": p["name"],
-            "price": p["price"], "qty": 1,
-            "category": p.get("category",""),
-            "added_at": now_str()
-        }
+        cart[pid] = {"product_id":pid,"name":p["name"],"price":p["price"],
+                     "qty":1,"category":p.get("category",""),
+                     "fields":p.get("fields",[]),"added_at":now_str()}
     fb.put(f"carts/{cid}", cart)
-    bot.answer_callback_query(c.id, f"✅ Added to cart: {p['name']}", show_alert=True)
+    bot.answer_callback_query(c.id, f"✅ {p['name']} added to cart!", show_alert=True)
 
-# ─────────────────────────────────────────────
-# VIEW CART
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "🛒 My Cart")
+# ── View Cart ─────────────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text=="🛒 My Cart")
 def msg_cart(msg):
     if not _guard(msg): return
     _show_cart(str(msg.chat.id))
 
-@bot.callback_query_handler(func=lambda c: c.data == "view_cart")
+@bot.callback_query_handler(func=lambda c: c.data=="view_cart")
 def cb_view_cart(c):
+    bot.answer_callback_query(c.id)
     _show_cart(str(c.message.chat.id), c.message.message_id)
 
 def _show_cart(cid, mid=None):
     cart = fb.get(f"carts/{cid}") or {}
     if not cart:
-        text = ("🛒 *My Cart*\n━━━━━━━━━━━━━━━━━━━━━\n"
-                "Your cart is empty.\n👉 Go to Shop to add items!")
-        m = types.InlineKeyboardMarkup()
-        m.add(types.InlineKeyboardButton("🛍️ Shop Now", callback_data="shop"))
+        text = "🛒 *My Cart*\n━━━━━━━━━━━━━━━━━━━━━\n🈳 Your cart is empty!\n\n👉 Go to Shop to add items."
+        mk = types.InlineKeyboardMarkup()
+        mk.add(types.InlineKeyboardButton("🛍️ Shop Now", callback_data="shop"))
         if mid:
-            try: bot.edit_message_text(text, cid, mid, parse_mode="Markdown", reply_markup=m); return
+            try: bot.edit_message_text(text,cid,mid,parse_mode="Markdown",reply_markup=mk); return
             except: pass
-        bot.send_message(cid, text, parse_mode="Markdown", reply_markup=m)
-        return
+        bot.send_message(cid,text,parse_mode="Markdown",reply_markup=mk); return
 
     total = sum(v["price"]*v.get("qty",1) for v in cart.values())
     lines = ["🛒 *My Cart*\n━━━━━━━━━━━━━━━━━━━━━"]
     for i,(pid,item) in enumerate(cart.items(),1):
-        lines.append(f"{i}. *{item['name']}*\n   Qty:{item.get('qty',1)} × {fmt_price(item['price'])} = {fmt_price(item['price']*item.get('qty',1))}")
+        lines.append(f"{i}. *{item['name']}*\n   {item.get('qty',1)} × {fmt_price(item['price'])} = *{fmt_price(item['price']*item.get('qty',1))}*")
     lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━\n💰 *Total: {fmt_price(total)}*")
-
-    m = types.InlineKeyboardMarkup(row_width=2)
-    # Remove buttons per item
-    for pid, item in cart.items():
-        m.add(types.InlineKeyboardButton(f"❌ Remove {item['name'][:15]}", callback_data=f"rmcart_{pid}"))
-    m.add(
-        types.InlineKeyboardButton("🗑️ Clear Cart",  callback_data="clear_cart"),
-        types.InlineKeyboardButton("💳 Checkout",    callback_data="checkout_cart"),
-    )
-    m.add(types.InlineKeyboardButton("🛍️ Continue Shopping", callback_data="shop"))
-
+    mk = types.InlineKeyboardMarkup(row_width=1)
+    for pid,item in cart.items():
+        mk.add(types.InlineKeyboardButton(f"❌ Remove {item['name'][:18]}", callback_data=f"rmcart_{pid}"))
+    mk.add(types.InlineKeyboardButton("🗑️ Clear Cart", callback_data="clear_cart"),
+           types.InlineKeyboardButton("💳 Checkout",   callback_data="checkout_cart"))
+    mk.add(types.InlineKeyboardButton("🛍️ Continue Shopping", callback_data="shop"))
     text = "\n".join(lines)
     if mid:
-        try: bot.edit_message_text(text, cid, mid, parse_mode="Markdown", reply_markup=m); return
+        try: bot.edit_message_text(text,cid,mid,parse_mode="Markdown",reply_markup=mk); return
         except: pass
-    bot.send_message(cid, text, parse_mode="Markdown", reply_markup=m)
+    bot.send_message(cid,text,parse_mode="Markdown",reply_markup=mk)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("rmcart_"))
 def cb_rm_cart(c):
     pid = c.data[7:]; cid = str(c.message.chat.id)
     cart = fb.get(f"carts/{cid}") or {}
-    name = cart.get(pid,{}).get("name","item")
-    cart.pop(pid, None)
-    fb.put(f"carts/{cid}", cart)
-    bot.answer_callback_query(c.id, f"🗑️ Removed {name}")
+    cart.pop(pid,None); fb.put(f"carts/{cid}",cart)
+    bot.answer_callback_query(c.id,"🗑️ Removed")
     _show_cart(cid, c.message.message_id)
 
-@bot.callback_query_handler(func=lambda c: c.data == "clear_cart")
+@bot.callback_query_handler(func=lambda c: c.data=="clear_cart")
 def cb_clear_cart(c):
-    cid = str(c.message.chat.id)
-    fb.delete(f"carts/{cid}")
-    bot.answer_callback_query(c.id, "🗑️ Cart cleared!")
-    _show_cart(cid, c.message.message_id)
+    fb.delete(f"carts/{str(c.message.chat.id)}")
+    bot.answer_callback_query(c.id,"🗑️ Cart cleared!")
+    _show_cart(str(c.message.chat.id), c.message.message_id)
 
-# ─────────────────────────────────────────────
-# BUY NOW FLOW
-# ─────────────────────────────────────────────
-@bot.callback_query_handler(func=lambda c: c.data.startswith("buynow_"))
-def cb_buy_now(c):
-    pid = c.data[7:]; cid = str(c.message.chat.id)
-    p = fb.get(f"products/{pid}")
-    if not p:
-        bot.answer_callback_query(c.id, "❌ Not found"); return
-
-    cat_id = p.get("category","")
-    set_temp(cid, {"product_id": pid, "product": p, "category": cat_id})
-
-    # Determine product type — check hardcoded keys first, then Firebase category name
-    def _get_product_type(cat_id):
-        cid_lower = cat_id.lower()
-        if any(k in cid_lower for k in ("ff", "diamond", "free_fire", "freefir")):
-            return "ff"
-        if any(k in cid_lower for k in ("pubg", "bgmi", "uc")):
-            return "pubg"
-        # Look up category name from Firebase
-        cat_data = fb.get(f"categories/{cat_id}") or {}
-        cat_name = cat_data.get("name","").lower()
-        if any(k in cat_name for k in ("free fire", "ff", "diamond")):
-            return "ff"
-        if any(k in cat_name for k in ("pubg", "bgmi", "uc")):
-            return "pubg"
-        return "delivery"
-
-    ptype = _get_product_type(cat_id)
-    if ptype == "ff":
-        _ask_ff_uid(cid, p)
-    elif ptype == "pubg":
-        _ask_pubg_uid(cid, p)
-    else:
-        _ask_delivery_info(cid, p)
-
-def _ask_ff_uid(cid, p):
-    set_state(cid, "wait_ff_uid")
-    bot.send_message(cid,
-        f"💎 *Free Fire Diamond*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Product: *{p['name']}*\n"
-        f"Price: *{fmt_price(p['price'])}*\n\n"
-        f"📝 Please enter your *Free Fire UID*:",
-        parse_mode="Markdown",
-        reply_markup=types.ForceReply(selective=True))
-
-def _ask_pubg_uid(cid, p):
-    set_state(cid, "wait_pubg_uid")
-    bot.send_message(cid,
-        f"🎮 *PUBG UC Top-up*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Product: *{p['name']}*\n"
-        f"Price: *{fmt_price(p['price'])}*\n\n"
-        f"📝 Please enter your *PUBG UID*:",
-        parse_mode="Markdown",
-        reply_markup=types.ForceReply(selective=True))
-
-def _ask_delivery_info(cid, p):
-    set_state(cid, "wait_delivery_name")
-    upd_temp(cid, {"delivery": {}})
-    bot.send_message(cid,
-        f"🏠 *Delivery Details Required*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Product: *{p['name']}*\n"
-        f"Price: *{fmt_price(p['price'])}*\n\n"
-        f"📝 Enter your *Full Name*:",
-        parse_mode="Markdown",
-        reply_markup=types.ForceReply(selective=True))
-
-# ─────────────────────────────────────────────
-# STATE-DRIVEN MESSAGE HANDLER
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: get_state(str(m.chat.id)) is not None)
-def handle_states(msg):
-    cid = str(msg.chat.id)
-    state = get_state(cid)
-    txt = msg.text.strip() if msg.text else ""
-
-    # ── FF / PUBG UID ──
-    if state in ("wait_ff_uid","wait_pubg_uid"):
-        uid = txt
-        if not uid.isdigit() or len(uid) < 6:
-            bot.send_message(cid, "❌ Invalid UID. Please enter a valid numeric UID:", reply_markup=types.ForceReply(selective=True)); return
-        upd_temp(cid, {"uid": uid})
-        set_state(cid, "wait_utr")
-        p = get_temp(cid).get("product",{})
-        game = "Free Fire" if state == "wait_ff_uid" else "PUBG"
-        m = types.InlineKeyboardMarkup()
-        m.add(types.InlineKeyboardButton("💳 Pay Now", url=PAYMENT_LINK))
-        bot.send_message(cid,
-            f"✅ UID confirmed: *{uid}*\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎮 Game: *{game}*\n"
-            f"📦 Product: *{p.get('name','')}*\n"
-            f"💰 Amount: *{fmt_price(p.get('price',0))}*\n\n"
-            f"1️⃣ Click *Pay Now* to complete payment\n"
-            f"2️⃣ Note your *UTR / Transaction Number*\n"
-            f"3️⃣ Send UTR number here to confirm\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📝 Enter your *UTR Number* after paying:",
-            parse_mode="Markdown", reply_markup=m)
-        return
-
-    # ── UTR ──
-    if state == "wait_utr":
-        utr = txt
-        if not utr.isdigit() or len(utr) != 12:
-            bot.send_message(cid, "❌ UTR must be exactly *12 digits*. Please enter again:", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True)); return
-        upd_temp(cid, {"utr": utr})
-        set_state(cid, "confirm_order")
-        temp = get_temp(cid)
-        m = types.InlineKeyboardMarkup(row_width=2)
-        m.add(
-            types.InlineKeyboardButton("✅ Confirm Order", callback_data="confirm_order"),
-            types.InlineKeyboardButton("❌ Cancel",        callback_data="cancel_order"),
-        )
-        is_cart = temp.get("is_cart", False)
-        if is_cart:
-            total = temp.get("cart_total", 0)
-            cart_items = temp.get("cart_items", {})
-            items_text = "\n".join([f"  • {v.get('name','Item')} × {v.get('qty',1)}" for v in cart_items.values()])
-            bot.send_message(cid,
-                f"🧾 *Order Summary*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🛒 Items:\n{items_text}\n\n"
-                f"💰 Total: *{fmt_price(total)}*\n"
-                f"🔖 UTR: *{utr}*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Confirm your order?",
-                parse_mode="Markdown", reply_markup=m)
-        else:
-            p = temp.get("product", {})
-            uid_line = f"🎮 UID: *{temp.get('uid','N/A')}*\n" if temp.get("uid") else ""
-            bot.send_message(cid,
-                f"🧾 *Order Summary*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 Product: *{p.get('name','')}*\n"
-                f"💰 Price: *{fmt_price(p.get('price',0))}*\n"
-                f"{uid_line}"
-                f"🔖 UTR: *{utr}*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Confirm your order?",
-                parse_mode="Markdown", reply_markup=m)
-        return
-
-    # ── DELIVERY FIELDS ──
-    delivery_states = {
-        "wait_delivery_name":    ("wait_delivery_mobile", "name",    "📱 Enter your *Mobile Number*:"),
-        "wait_delivery_mobile":  ("wait_delivery_pincode","mobile",  "📮 Enter your *PIN Code*:"),
-        "wait_delivery_pincode": ("wait_delivery_state",  "pincode", "🏙️ Enter your *State*:"),
-        "wait_delivery_state":   ("wait_delivery_country","state",   "🌍 Enter your *Country*:"),
-        "wait_delivery_country": ("wait_delivery_address","country", "🏠 Enter your full *Address*:"),
-        "wait_delivery_address": (None,                  "address",  None),
-    }
-    if state in delivery_states:
-        next_state, field, next_prompt = delivery_states[state]
-        # Validation
-        if field == "mobile" and not re.match(r"^\d{7,15}$", txt):
-            bot.send_message(cid, "❌ Invalid mobile number. Digits only (7–15):", reply_markup=types.ForceReply(selective=True)); return
-        if field == "pincode" and not re.match(r"^\d{4,10}$", txt):
-            bot.send_message(cid, "❌ Invalid PIN code:", reply_markup=types.ForceReply(selective=True)); return
-        temp = get_temp(cid)
-        temp.setdefault("delivery",{})[field] = txt
-        set_temp(cid, temp)
-        if next_state:
-            set_state(cid, next_state)
-            bot.send_message(cid, next_prompt, parse_mode="Markdown", reply_markup=types.ForceReply(selective=True))
-        else:
-            # All delivery info collected → ask payment
-            set_state(cid, "wait_utr")
-            p = temp.get("product",{})
-            m = types.InlineKeyboardMarkup()
-            m.add(types.InlineKeyboardButton("💳 Pay Now", url=PAYMENT_LINK))
-            bot.send_message(cid,
-                f"📦 *Delivery Summary*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 Name: {temp['delivery']['name']}\n"
-                f"📱 Mobile: {temp['delivery']['mobile']}\n"
-                f"📮 PIN: {temp['delivery']['pincode']}\n"
-                f"🏙️ State: {temp['delivery']['state']}\n"
-                f"🌍 Country: {temp['delivery']['country']}\n"
-                f"🏠 Address: {temp['delivery']['address']}\n"
-                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"💰 Amount to pay: *{fmt_price(p.get('price',0))}*\n\n"
-                f"1️⃣ Click *Pay Now*\n"
-                f"2️⃣ Send your *UTR/Transaction Number* here:",
-                parse_mode="Markdown", reply_markup=m)
-        return
-
-    # ── WALLET OPERATIONS ──
-    if state == "wait_deposit_amount":
-        if not txt.isdigit() or int(txt) < 1:
-            bot.send_message(cid, "❌ Enter a valid amount:", reply_markup=types.ForceReply(selective=True)); return
-        amount = int(txt)
-        upd_temp(cid, {"deposit_amount": amount})
-        set_state(cid, "wait_deposit_utr")
-        m = types.InlineKeyboardMarkup()
-        m.add(types.InlineKeyboardButton("💳 Pay Now", url=PAYMENT_LINK))
-        bot.send_message(cid,
-            f"💳 *Deposit ₹{amount}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"1️⃣ Click *Pay Now*\n"
-            f"2️⃣ Send UTR number after payment:",
-            parse_mode="Markdown", reply_markup=m)
-        return
-
-    if state == "wait_deposit_utr":
-        utr = txt
-        if not utr.isdigit() or len(utr) != 12:
-            bot.send_message(cid, "❌ UTR must be exactly *12 digits*. Please enter again:", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True)); return
-        amount = get_temp(cid).get("deposit_amount", 0)
-        txn = fb.post("transactions", {
-            "chat_id": cid, "type": "deposit", "amount": amount,
-            "utr": utr, "status": "pending", "created_at": now_str()
-        })
-        clear_state(cid)
-        bot.send_message(cid,
-            f"✅ *Deposit Request Submitted!*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 Amount: *₹{amount}*\n"
-            f"🔖 UTR: *{utr}*\n"
-            f"⏳ Status: *Pending Verification*\n\n"
-            f"Your wallet will be credited after verification.",
-            parse_mode="Markdown", reply_markup=kb_main())
-        return
-
-    if state == "wait_withdraw_amount":
-        if not txt.isdigit():
-            bot.send_message(cid, "❌ Enter a valid amount:", reply_markup=types.ForceReply(selective=True)); return
-        amount = int(txt)
-        u = get_user(cid)
-        wallet = u.get("wallet",0)
-        if amount < MIN_WITHDRAWAL:
-            bot.send_message(cid, f"❌ Minimum withdrawal is ₹{MIN_WITHDRAWAL}:", reply_markup=types.ForceReply(selective=True)); return
-        if amount > wallet:
-            bot.send_message(cid, f"❌ Insufficient balance. Your wallet: ₹{wallet}:", reply_markup=types.ForceReply(selective=True)); return
-        upd_temp(cid, {"withdraw_amount": amount})
-        set_state(cid, "wait_withdraw_account")
-        bot.send_message(cid, "🏦 Enter your *UPI ID / Bank Account Number*:", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True))
-        return
-
-    if state == "wait_withdraw_account":
-        account = txt
-        temp = get_temp(cid)
-        amount = temp.get("withdraw_amount", 0)
-        fb.post("withdrawals", {
-            "chat_id": cid, "amount": amount, "account": account,
-            "status": "pending", "created_at": now_str(),
-            "note": ""
-        })
-        u = get_user(cid)
-        fb.patch(f"users/{cid}", {"wallet": u.get("wallet",0) - amount})
-        clear_state(cid)
-        bot.send_message(cid,
-            f"✅ *Withdrawal Request Submitted!*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💰 Amount: *₹{amount}*\n"
-            f"🏦 Account: *{account}*\n"
-            f"⏳ Status: *Pending* (24–48 hrs)\n",
-            parse_mode="Markdown", reply_markup=kb_main())
-        return
-
-    if state == "wait_wallet_pay_utr":
-        utr = txt
-        temp = get_temp(cid)
-        amount = temp.get("wallet_pay_amount",0)
-        order_id = temp.get("order_id","")
-        fb.patch(f"orders/{order_id}", {"utr": utr, "payment_status": "pending", "updated_at": now_str()})
-        u = get_user(cid)
-        fb.patch(f"users/{cid}", {"wallet": u.get("wallet",0) - amount})
-        clear_state(cid)
-        bot.send_message(cid,
-            f"✅ *Order Placed!*\n"
-            f"🔖 Order ID: *{order_id}*\n"
-            f"💰 Amount: *₹{amount}*\n"
-            f"⏳ Status: *Pending Verification*",
-            parse_mode="Markdown", reply_markup=kb_main())
-        return
-
-# ─────────────────────────────────────────────
-# CONFIRM / CANCEL ORDER
-# ─────────────────────────────────────────────
-@bot.callback_query_handler(func=lambda c: c.data == "confirm_order")
-def cb_confirm_order(c):
-    cid = str(c.message.chat.id)
-    temp = get_temp(cid)
-    utr = temp.get("utr","")
-    order_id = gen_order_id()
-    u = get_user(cid)
-    is_cart = temp.get("is_cart", False)
-
-    if is_cart:
-        cart_items = temp.get("cart_items", {})
-        total = temp.get("cart_total", 0)
-        order = {
-            "order_id": order_id, "chat_id": cid,
-            "user_name": u.get("full_name",""),
-            "items": cart_items, "total": total, "price": total,
-            "utr": utr, "payment_method": "online",
-            "payment_status": "pending", "order_status": "pending",
-            "created_at": now_str(), "updated_at": now_str(),
-        }
-        fb.put(f"orders/{order_id}", order)
-        fb.delete(f"carts/{cid}")
-        fb.patch(f"users/{cid}", {
-            "purchase_count": u.get("purchase_count",0)+1,
-            "total_spent": u.get("total_spent",0)+total,
-        })
-        fb.put(f"users/{cid}/purchase_history/{order_id}", {
-            "order_id": order_id, "product": f"{len(cart_items)} item(s)",
-            "price": total, "status":"pending", "date": now_str()
-        })
-        amount_display = fmt_price(total)
-        product_line = f"🛒 Items: *{len(cart_items)}*"
-    else:
-        p = temp.get("product", {})
-        uid = temp.get("uid","")
-        delivery = temp.get("delivery",{})
-        price = p.get("price",0)
-        order = {
-            "order_id": order_id, "chat_id": cid,
-            "user_name": u.get("full_name",""),
-            "product_name": p.get("name",""),
-            "price": price,
-            "category": temp.get("category",""),
-            "uid": uid, "delivery": delivery,
-            "utr": utr, "payment_status": "pending",
-            "order_status": "pending",
-            "created_at": now_str(), "updated_at": now_str(),
-        }
-        fb.put(f"orders/{order_id}", order)
-        fb.patch(f"users/{cid}", {
-            "purchase_count": u.get("purchase_count",0)+1,
-            "total_spent": u.get("total_spent",0)+price,
-        })
-        fb.put(f"users/{cid}/purchase_history/{order_id}", {
-            "order_id": order_id, "product": p.get("name",""),
-            "price": price, "status":"pending", "date": now_str()
-        })
-        referred_by = u.get("referred_by","")
-        if referred_by:
-            commission = get_commission()
-            earned = round(price * commission / 100, 2)
-            fb.put(f"referrals/{referred_by}/{cid}/pending_commission", earned)
-        amount_display = fmt_price(price)
-        product_line = f"📦 Product: *{p.get('name','')}*"
-
-    clear_state(cid)
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    bot.send_message(cid,
-        f"🎉 *Order Placed Successfully!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{product_line}\n"
-        f"💰 Amount: *{amount_display}*\n"
-        f"⏳ Status: *Pending Payment Verification*\n\n"
-        f"We'll notify you once verified! ✉️",
-        parse_mode="Markdown", reply_markup=kb_main())
-
-@bot.callback_query_handler(func=lambda c: c.data == "cancel_order")
-def cb_cancel_order(c):
-    cid = str(c.message.chat.id)
-    clear_state(cid)
-    bot.answer_callback_query(c.id, "❌ Order cancelled")
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    bot.send_message(cid, "❌ Order cancelled.", reply_markup=kb_main())
-
-# ─────────────────────────────────────────────
-# CHECKOUT CART
-# ─────────────────────────────────────────────
-@bot.callback_query_handler(func=lambda c: c.data == "checkout_cart")
+# ── Checkout Cart ─────────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data=="checkout_cart")
 def cb_checkout_cart(c):
+    bot.answer_callback_query(c.id)
     cid = str(c.message.chat.id)
     cart = fb.get(f"carts/{cid}") or {}
-    if not cart:
-        bot.answer_callback_query(c.id, "🛒 Cart is empty!"); return
+    if not cart: bot.answer_callback_query(c.id,"🛒 Cart is empty!",show_alert=True); return
     total = sum(v["price"]*v.get("qty",1) for v in cart.values())
     u = get_user(cid)
+    # Store cart in temp and start field collection for cart items
+    set_temp(cid, {"is_cart":True,"cart_items":dict(cart),"cart_total":total,"field_queue":[]})
+    # Collect fields for each cart item sequentially
+    _start_cart_fields(cid, dict(cart), total, c.message.message_id, u)
 
-    m = types.InlineKeyboardMarkup(row_width=2)
-    m.add(
-        types.InlineKeyboardButton("💳 Pay Online", callback_data="cart_pay_online"),
-        types.InlineKeyboardButton("👛 Pay from Wallet", callback_data=f"cart_pay_wallet_{total}"),
-    )
-    m.add(types.InlineKeyboardButton("🔙 Back to Cart", callback_data="view_cart"))
+def _start_cart_fields(cid, cart, total, mid, u):
+    """Build a queue of (item_name, field) pairs for all cart items that need fields."""
+    queue = []
+    for pid, item in cart.items():
+        fields = item.get("fields",[])
+        if not fields:
+            # Fetch from DB in case cart was added before fields were defined
+            p = fb.get(f"products/{pid}") or {}
+            fields = p.get("fields",[])
+        for f in fields:
+            queue.append({"pid":pid,"item_name":item["name"],"field":f,"answer":""})
+    upd_temp(cid,{"field_queue":queue,"field_index":0,"field_answers":{}})
+    if queue:
+        _ask_next_field(cid)
+    else:
+        # No fields needed — go to payment
+        _show_checkout_payment(cid, total, u)
 
-    bot.edit_message_text(
+def _ask_next_field(cid):
+    temp = get_temp(cid)
+    queue = temp.get("field_queue",[])
+    idx = temp.get("field_index",0)
+    if idx >= len(queue):
+        # All fields collected
+        total = temp.get("cart_total",0) if temp.get("is_cart") else temp.get("product",{}).get("price",0)
+        u = get_user(cid)
+        _show_checkout_payment(cid, total, u)
+        return
+    entry = queue[idx]
+    f = entry["field"]
+    label = f.get("label","Enter value")
+    ftype = f.get("type","text")
+    req_star = " *" if f.get("required") else ""
+    set_state(cid,"wait_field")
+    send_msg(cid,
+        f"📝 *{entry['item_name']}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Field {idx+1}/{len(queue)}\n\n"
+        f"Please enter: *{label}*{req_star}\n"
+        + (f"_(type: {ftype})_" if ftype not in ("text","string") else ""),
+        reply_markup=types.ForceReply(selective=True))
+
+def _show_checkout_payment(cid, amount, u):
+    temp = get_temp(cid)
+    wallet = u.get("wallet",0) if u else 0
+    is_cart = temp.get("is_cart",False)
+    if is_cart:
+        cart_items = temp.get("cart_items",{})
+        items_txt = "\n".join(f"  • {v.get('name','')} ×{v.get('qty',1)}" for v in cart_items.values())
+        summary = f"🛒 *Cart Items:*\n{items_txt}\n\n💰 *Total: {fmt_price(amount)}*"
+    else:
+        p = temp.get("product",{})
+        summary = f"📦 *{p.get('name','')}*\n💰 *Price: {fmt_price(amount)}*"
+
+    mk = types.InlineKeyboardMarkup(row_width=2)
+    mk.add(types.InlineKeyboardButton("💳 Pay Online (KimiPay)", callback_data="pay_kimipay"),
+           types.InlineKeyboardButton("👛 Pay from Wallet",      callback_data=f"pay_wallet"))
+    mk.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_order"))
+
+    set_state(cid,"choose_payment")
+    send_msg(cid,
         f"💳 *Checkout*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🛒 Items: *{len(cart)}*\n"
-        f"💰 Total: *{fmt_price(total)}*\n"
-        f"👛 Wallet Balance: *{fmt_price(u.get('wallet',0))}*\n"
+        f"{summary}\n"
+        f"👛 Wallet Balance: *{fmt_price(wallet)}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"Choose payment method:",
-        cid, c.message.message_id,
-        parse_mode="Markdown", reply_markup=m)
+        reply_markup=mk)
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("cart_pay_wallet_"))
-def cb_cart_wallet(c):
-    cid = str(c.message.chat.id)
-    total = float(c.data.split("_")[-1])
-    u = get_user(cid)
-    if u.get("wallet",0) < total:
-        bot.answer_callback_query(c.id, f"❌ Insufficient wallet balance! You have ₹{u.get('wallet',0)}", show_alert=True); return
-    cart = fb.get(f"carts/{cid}") or {}
-    order_id = gen_order_id()
-    order = {
-        "order_id": order_id, "chat_id": cid,
-        "user_name": u.get("full_name",""),
-        "items": cart, "total": total,
-        "payment_method": "wallet",
-        "payment_status": "success",
-        "order_status": "processing",
-        "created_at": now_str(), "updated_at": now_str(),
-    }
-    fb.put(f"orders/{order_id}", order)
-    fb.patch(f"users/{cid}", {
-        "wallet": u.get("wallet",0) - total,
-        "purchase_count": u.get("purchase_count",0) + 1,
-        "total_spent": u.get("total_spent",0) + total,
-    })
-    fb.delete(f"carts/{cid}")
+# ── Buy Now ───────────────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data.startswith("buynow_"))
+def cb_buy_now(c):
     bot.answer_callback_query(c.id)
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    bot.send_message(cid,
-        f"✅ *Order Placed via Wallet!*\n"
-        f"🔖 Order ID: *{order_id}*\n"
-        f"💰 Paid: *{fmt_price(total)}*\n"
-        f"📦 Status: *Processing*",
-        parse_mode="Markdown", reply_markup=kb_main())
+    pid = c.data[7:]; cid = str(c.message.chat.id)
+    p = fb.get(f"products/{pid}")
+    if not p: bot.answer_callback_query(c.id,"❌ Not found",show_alert=True); return
+    set_temp(cid,{"product_id":pid,"product":p,"is_cart":False,"field_index":0,
+                   "field_answers":{},"field_queue":[]})
+    # Build field queue from product fields
+    fields = p.get("fields",[])
+    queue = [{"pid":pid,"item_name":p["name"],"field":f,"answer":""} for f in fields]
+    upd_temp(cid,{"field_queue":queue,"field_index":0})
+    if queue:
+        _ask_next_field(cid)
+    else:
+        u = get_user(cid)
+        _show_checkout_payment(cid, p.get("price",0), u)
 
-@bot.callback_query_handler(func=lambda c: c.data == "cart_pay_online")
-def cb_cart_online(c):
+# ── Pay with Wallet ───────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data=="pay_wallet")
+def cb_pay_wallet(c):
+    bot.answer_callback_query(c.id)
     cid = str(c.message.chat.id)
-    cart = fb.get(f"carts/{cid}") or {}
-    total = sum(v["price"]*v.get("qty",1) for v in cart.values())
-    # Save cart data so UTR handler can build the correct order
-    upd_temp(cid, {"cart_items": cart, "cart_total": total, "is_cart": True})
-    set_state(cid, "wait_utr")
-    m = types.InlineKeyboardMarkup()
-    m.add(types.InlineKeyboardButton("💳 Pay Now", url=PAYMENT_LINK))
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    bot.send_message(cid,
-        f"💳 *Pay Online*\n━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Total: *{fmt_price(total)}*\n\n"
-        f"1️⃣ Click *Pay Now*\n"
-        f"2️⃣ Enter UTR after payment:",
-        parse_mode="Markdown", reply_markup=m)
-
-# ─────────────────────────────────────────────
-# REFER & EARN
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "👥 Refer & Earn")
-def msg_refer(msg):
-    if not _guard(msg): return
-    _show_refer(str(msg.chat.id))
-
-@bot.callback_query_handler(func=lambda c: c.data == "refer")
-def cb_refer(c):
-    _show_refer(str(c.message.chat.id))
-
-def _show_refer(cid):
+    temp = get_temp(cid)
     u = get_user(cid)
-    if not u: return
-    commission = get_commission()
-    rc = u.get("refer_code","")
-    link = f"https://t.me/{BOT_USERNAME}?start={rc}"
-    bot.send_message(cid,
-        f"👥 *Refer & Earn*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💸 Earn *{commission}% commission* on every purchase made by your referrals!\n\n"
-        f"🔗 *Your Refer Link:*\n`{link}`\n\n"
-        f"📊 *Your Stats:*\n"
-        f"  👥 Total Referrals: *{u.get('refer_count',0)}*\n"
-        f"  ✅ Verified: *{u.get('verified_refer',0)}*\n"
-        f"  ⏳ Pending: *{u.get('pending_refer',0)}*\n"
-        f"  💰 Total Earned: *₹{u.get('total_earned',0):,.2f}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📤 Share your link and start earning!",
-        parse_mode="Markdown")
+    is_cart = temp.get("is_cart",False)
+    amount = temp.get("cart_total",0) if is_cart else temp.get("product",{}).get("price",0)
+    if u.get("wallet",0) < amount:
+        bot.answer_callback_query(c.id,
+            f"❌ Insufficient balance! Wallet: {fmt_price(u.get('wallet',0))}",
+            show_alert=True); return
+    _place_order(cid, "wallet", amount, None)
 
-@bot.message_handler(func=lambda m: m.text == "👤 My Refer")
-def msg_my_refer(msg):
-    if not _guard(msg): return
+# ── Pay with KimiPay ──────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data=="pay_kimipay")
+def cb_pay_kimipay(c):
+    bot.answer_callback_query(c.id)
+    cid = str(c.message.chat.id)
+    temp = get_temp(cid)
+    is_cart = temp.get("is_cart",False)
+    amount = int(temp.get("cart_total",0) if is_cart else temp.get("product",{}).get("price",0))
+    order_sn = gen_order_id()
+    u = get_user(cid)
+    # Create KimiPay order
+    result = kimipay.create_order(
+        amount=amount, order_sn=order_sn,
+        description="HamzaShop Order",
+        customer_email=temp.get("field_answers",{}).get("email",""))
+    if result.get("error"):
+        # Fallback to manual payment link
+        plink = PAYMENT_LINK()
+        mk = types.InlineKeyboardMarkup()
+        if plink: mk.add(types.InlineKeyboardButton("💳 Pay Now", url=plink))
+        mk.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_order"))
+        send_msg(cid,
+            f"⚠️ Auto-payment unavailable.\n{result['error']}\n\n"
+            f"Please pay manually and contact support.",
+            reply_markup=mk)
+        return
+
+    pay_url = result["payment_url"]
+    kimipay_order_id = result["kimipay_order_id"]
+    # Store payment session in Firebase
+    upd_temp(cid,{"order_sn":order_sn,"kimipay_order_id":kimipay_order_id,"amount":amount})
+    fb.put(f"payment_sessions/{order_sn}",{
+        "chat_id":cid,"order_sn":order_sn,
+        "kimipay_order_id":kimipay_order_id,
+        "amount":amount,"status":"pending",
+        "temp":temp,"created_at":now_str()
+    })
+
+    mk = types.InlineKeyboardMarkup()
+    mk.add(types.InlineKeyboardButton("💳 Pay Now", url=pay_url))
+    mk.add(types.InlineKeyboardButton("✅ I've Paid — Verify", callback_data=f"verify_pay_{order_sn}"))
+    mk.add(types.InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order"))
+    set_state(cid,"wait_payment")
+    send_msg(cid,
+        f"💳 *Complete Your Payment*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Amount: *{fmt_price(amount)}*\n"
+        f"🔖 Order: `{order_sn}`\n\n"
+        f"1️⃣ Click *Pay Now* to open payment page\n"
+        f"2️⃣ Complete payment on KimiPay\n"
+        f"3️⃣ Click *I've Paid* to verify\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ Do not close this screen until payment is done.",
+        reply_markup=mk)
+
+# ── Verify Payment ────────────────────────────────────────────────────────────
+_verify_attempts = {}  # order_sn → count
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("verify_pay_"))
+def cb_verify_pay(c):
+    bot.answer_callback_query(c.id,"🔍 Checking payment...")
+    cid = str(c.message.chat.id)
+    order_sn = c.data[11:]
+    temp = get_temp(cid)
+    kimipay_id = temp.get("kimipay_order_id") or ""
+
+    # Rate limit
+    attempts = _verify_attempts.get(order_sn,0)
+    if attempts >= 8:
+        bot.answer_callback_query(c.id,
+            "❌ Too many attempts. Please contact support.",show_alert=True); return
+    _verify_attempts[order_sn] = attempts+1
+
+    if not kimipay_id:
+        # Try fetching from DB
+        sess = fb.get(f"payment_sessions/{order_sn}") or {}
+        kimipay_id = sess.get("kimipay_order_id","")
+
+    result = kimipay.query_order(kimipay_id)
+    status = result.get("status","pending")
+
+    if status in ("success","paid","completed"):
+        _verify_attempts.pop(order_sn,None)
+        amount = temp.get("amount",0) or result.get("amount",0)
+        _place_order(cid,"kimipay",amount,order_sn)
+    elif result.get("error"):
+        bot.answer_callback_query(c.id,
+            f"⚠️ Could not verify: {result['error'][:60]}",show_alert=True)
+    else:
+        remaining = 8-(_verify_attempts.get(order_sn,0))
+        bot.answer_callback_query(c.id,
+            f"⏳ Payment not confirmed yet. ({remaining} attempts left)\nTry again after completing payment.",
+            show_alert=True)
+
+# ── KimiPay Callback ──────────────────────────────────────────────────────────
+def handle_kimipay_callback(data:dict):
+    """Called by Flask webhook route."""
+    order_sn   = data.get("order_sn","")
+    status     = data.get("status","")
+    amount     = data.get("amount",0)
+    if status not in ("success","paid","completed"): return "ok"
+    sess = fb.get(f"payment_sessions/{order_sn}")
+    if not sess: return "ok"
+    if sess.get("status")=="completed": return "ok"
+    fb.patch(f"payment_sessions/{order_sn}",{"status":"completed"})
+    cid = sess.get("chat_id")
+    # Restore temp
+    saved_temp = sess.get("temp",{})
+    set_temp(cid,saved_temp)
+    upd_temp(cid,{"amount":amount,"order_sn":order_sn})
+    _place_order(cid,"kimipay",amount,order_sn)
+    return "ok"
+
+# ── Place Order ───────────────────────────────────────────────────────────────
+def _place_order(cid, payment_method, amount, order_sn=None):
+    temp = get_temp(cid)
+    u = get_user(cid)
+    is_cart = temp.get("is_cart",False)
+    field_answers = temp.get("field_answers",{})
+    order_id = order_sn or gen_order_id()
+
+    if is_cart:
+        cart_items = temp.get("cart_items",{})
+        order = {
+            "order_id":order_id,"chat_id":cid,
+            "user_name":u.get("full_name",""),"user_id":cid,
+            "items":cart_items,"total":amount,"price":amount,
+            "payment_method":payment_method,
+            "payment_status":"success" if payment_method in ("kimipay","wallet") else "pending",
+            "order_status":"processing" if payment_method in ("kimipay","wallet") else "pending",
+            "field_answers":field_answers,
+            "created_at":now_str(),"updated_at":now_str(),
+        }
+        fb.put(f"orders/{order_id}",order)
+        fb.delete(f"carts/{cid}")
+        fb.put(f"users/{cid}/transactions/{order_id}",{
+            "type":"purchase","for":f"{len(cart_items)} item(s)",
+            "amount":-amount,"status":"success","date":now_str()
+        })
+    else:
+        p = temp.get("product",{})
+        order = {
+            "order_id":order_id,"chat_id":cid,
+            "user_name":u.get("full_name",""),"user_id":cid,
+            "product_id":temp.get("product_id",""),
+            "product_name":p.get("name",""),"price":amount,
+            "category":p.get("category",""),
+            "payment_method":payment_method,
+            "payment_status":"success" if payment_method in ("kimipay","wallet") else "pending",
+            "order_status":"processing" if payment_method in ("kimipay","wallet") else "pending",
+            "field_answers":field_answers,
+            "created_at":now_str(),"updated_at":now_str(),
+        }
+        fb.put(f"orders/{order_id}",order)
+        fb.put(f"users/{cid}/transactions/{order_id}",{
+            "type":"purchase","for":p.get("name",""),
+            "amount":-amount,"status":"success","date":now_str()
+        })
+
+    # Deduct wallet if wallet payment
+    if payment_method=="wallet":
+        fb.patch(f"users/{cid}",{
+            "wallet":max(0,u.get("wallet",0)-amount),
+            "purchase_count":u.get("purchase_count",0)+1,
+            "total_spent":u.get("total_spent",0)+amount,
+        })
+    else:
+        fb.patch(f"users/{cid}",{
+            "purchase_count":u.get("purchase_count",0)+1,
+            "total_spent":u.get("total_spent",0)+amount,
+        })
+
+    # Referral commission
+    referred_by = u.get("referred_by","")
+    if referred_by:
+        comm_pct = REFER_COMMISSION()
+        earned = round(amount*comm_pct/100,2)
+        ref_u = get_user(referred_by)
+        if ref_u:
+            fb.patch(f"users/{referred_by}",{
+                "wallet":ref_u.get("wallet",0)+earned,
+                "total_earned":ref_u.get("total_earned",0)+earned,
+                "verified_refer":ref_u.get("verified_refer",0)+1,
+                "pending_refer":max(0,ref_u.get("pending_refer",0)-1),
+            })
+            fb.put(f"users/{referred_by}/transactions/{order_id}_ref",{
+                "type":"referral","for":u.get("full_name","User"),
+                "amount":earned,"status":"success","date":now_str()
+            })
+            fb.patch(f"referrals/{referred_by}/{cid}",{"status":"verified","earned":
+                fb.get(f"referrals/{referred_by}/{cid}/earned") or 0 + earned})
+            send_msg(referred_by,
+                f"💸 *Referral Commission Earned!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *{u.get('full_name','A user')}* made a purchase!\n"
+                f"💰 You earned: *{fmt_price(earned)}*\n"
+                f"👛 New wallet balance: *{fmt_price(ref_u.get('wallet',0)+earned)}*")
+
+    clear_state(cid)
+    if is_cart:
+        product_line = f"🛒 Items: *{len(temp.get('cart_items',{}))}*"
+    else:
+        product_line = f"📦 *{temp.get('product',{}).get('name','')}*"
+
+    send_msg(cid,
+        f"✅ *Order Confirmed!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{product_line}\n"
+        f"💰 Amount: *{fmt_price(amount)}*\n"
+        f"💳 Method: *{payment_method.title()}*\n"
+        f"📋 Order ID: `{order_id}`\n"
+        f"⏳ Status: *Processing*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📬 We'll notify you on any update!",
+        reply_markup=kb_main())
+
+    # Notify admin
+    send_notify(
+        f"🛒 *New Order!*\n"
+        f"👤 {u.get('full_name',cid)} | 💰 {fmt_price(amount)}\n"
+        f"📋 `{order_id}` | 💳 {payment_method}")
+
+# ── Cancel ────────────────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data=="cancel_order")
+def cb_cancel(c):
+    bot.answer_callback_query(c.id,"❌ Cancelled")
+    cid = str(c.message.chat.id)
+    clear_state(cid)
+    try: bot.delete_message(cid,c.message.message_id)
+    except: pass
+    send_msg(cid,"❌ *Order cancelled.*\n\nReturn to menu:",reply_markup=kb_main())
+
+@bot.message_handler(func=lambda m: m.text=="❌ Cancel")
+def msg_cancel(msg):
     cid = str(msg.chat.id)
-    refs = fb.get(f"referrals/{cid}") or {}
-    if not refs:
-        bot.send_message(cid, "👤 *My Referrals*\n━━━━━━━━━━━━━━━━━━━━━\nNo referrals yet.\nShare your link to earn!", parse_mode="Markdown"); return
-    lines = ["👤 *My Referrals*\n━━━━━━━━━━━━━━━━━━━━━"]
-    for i,(rid,rd) in enumerate(refs.items(),1):
-        status = "✅" if rd.get("status")=="verified" else "⏳"
-        earned = rd.get("earned",0)
-        lines.append(f"{i}. {status} *{rd.get('name','User')}*\n   💰 Earned: ₹{earned}")
-    bot.send_message(cid, "\n".join(lines), parse_mode="Markdown")
+    clear_state(cid)
+    send_msg(cid,"❌ *Cancelled.*",reply_markup=kb_main())
 
-# ─────────────────────────────────────────────
-# WALLET
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "💰 Wallet")
+# ── Field State Handler ───────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: get_state(str(m.chat.id))=="wait_field")
+def handle_field(msg):
+    cid = str(msg.chat.id)
+    if _guard_cancel(msg): msg_cancel(msg); return
+    temp = get_temp(cid)
+    queue = temp.get("field_queue",[])
+    idx = temp.get("field_index",0)
+    if idx >= len(queue):
+        return
+    entry = queue[idx]
+    f = entry["field"]
+    label = f.get("label","field")
+    ftype = f.get("type","text")
+    val = msg.text.strip() if msg.text else ""
+
+    # Validate
+    if f.get("required") and not val:
+        send_msg(cid,f"❌ *{label}* is required. Please enter a value:",
+            reply_markup=types.ForceReply(selective=True)); return
+    if ftype=="email" and val and not re.match(r"^[^@]+@[^@]+\.[^@]+$",val):
+        send_msg(cid,f"❌ Invalid email format. Enter a valid email for *{label}*:",
+            reply_markup=types.ForceReply(selective=True)); return
+    if ftype in ("mobile","phone") and val and not re.match(r"^\d{7,15}$",val):
+        send_msg(cid,f"❌ Invalid mobile number. Digits only (7–15) for *{label}*:",
+            reply_markup=types.ForceReply(selective=True)); return
+    if ftype in ("uid","number") and val and not val.isdigit():
+        send_msg(cid,f"❌ *{label}* must be numeric. Enter again:",
+            reply_markup=types.ForceReply(selective=True)); return
+    if ftype=="uid" and val and len(val)<6:
+        send_msg(cid,f"❌ UID must be at least 6 digits. Enter your *{label}*:",
+            reply_markup=types.ForceReply(selective=True)); return
+    max_len = f.get("max_length",500)
+    if val and len(val)>int(max_len):
+        send_msg(cid,f"❌ *{label}* is too long (max {max_len} chars). Enter again:",
+            reply_markup=types.ForceReply(selective=True)); return
+
+    # Store answer
+    answers = temp.get("field_answers",{})
+    answers[label] = val
+    upd_temp(cid,{"field_answers":answers,"field_index":idx+1})
+    _ask_next_field(cid)
+
+# ── Deposit ───────────────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data=="wallet_deposit")
+def cb_deposit(c):
+    bot.answer_callback_query(c.id)
+    cid = str(c.message.chat.id)
+    min_dep = MIN_DEPOSIT()
+    set_state(cid,"wait_deposit_amount")
+    send_msg(cid,
+        f"💵 *Add Money to Wallet*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Minimum deposit: *{fmt_price(min_dep)}*\n\n"
+        f"Enter amount to deposit (₹):",
+        reply_markup=kb_cancel())
+
+@bot.message_handler(func=lambda m: get_state(str(m.chat.id))=="wait_deposit_amount")
+def handle_deposit_amount(msg):
+    cid = str(msg.chat.id)
+    if _guard_cancel(msg): msg_cancel(msg); return
+    if not msg.text or not msg.text.strip().isdigit():
+        send_msg(cid,"❌ Enter a valid amount (numbers only):",
+            reply_markup=types.ForceReply(selective=True)); return
+    amount = int(msg.text.strip())
+    min_dep = MIN_DEPOSIT()
+    if amount < min_dep:
+        send_msg(cid,f"❌ Minimum deposit is *{fmt_price(min_dep)}*. Enter a higher amount:",
+            reply_markup=types.ForceReply(selective=True)); return
+
+    order_sn = gen_order_id()
+    result = kimipay.create_order(amount=amount,order_sn=order_sn,description="Wallet Deposit")
+    if result.get("error"):
+        plink = PAYMENT_LINK()
+        mk = types.InlineKeyboardMarkup()
+        if plink: mk.add(types.InlineKeyboardButton("💳 Pay Now",url=plink))
+        mk.add(types.InlineKeyboardButton("❌ Cancel",callback_data="cancel_order"))
+        set_state(cid,"manual_deposit")
+        upd_temp(cid,{"deposit_amount":amount,"order_sn":order_sn})
+        send_msg(cid,
+            f"💳 *Deposit ₹{amount}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Auto payment unavailable. Pay manually:\n{result['error']}\n\n"
+            f"After payment contact support.",reply_markup=mk); return
+
+    pay_url = result["payment_url"]
+    kimipay_id = result["kimipay_order_id"]
+    upd_temp(cid,{"deposit_amount":amount,"order_sn":order_sn,"kimipay_order_id":kimipay_id})
+    fb.put(f"deposit_sessions/{order_sn}",{
+        "chat_id":cid,"amount":amount,"order_sn":order_sn,
+        "kimipay_order_id":kimipay_id,"status":"pending","created_at":now_str()
+    })
+    fb.put(f"users/{cid}/transactions/{order_sn}",{
+        "type":"deposit","for":"Wallet Top-up",
+        "amount":amount,"status":"pending","date":now_str()
+    })
+    mk = types.InlineKeyboardMarkup()
+    mk.add(types.InlineKeyboardButton("💳 Pay Now",url=pay_url))
+    mk.add(types.InlineKeyboardButton("✅ I've Paid — Verify",callback_data=f"verify_dep_{order_sn}"))
+    mk.add(types.InlineKeyboardButton("❌ Cancel",callback_data="cancel_order"))
+    set_state(cid,"wait_deposit_verify")
+    send_msg(cid,
+        f"💳 *Deposit ₹{amount}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"1️⃣ Click *Pay Now*\n"
+        f"2️⃣ Complete payment\n"
+        f"3️⃣ Click *I've Paid* to verify\n"
+        f"🔖 Ref: `{order_sn}`",reply_markup=mk)
+
+_dep_attempts = {}
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("verify_dep_"))
+def cb_verify_dep(c):
+    bot.answer_callback_query(c.id,"🔍 Checking...")
+    cid = str(c.message.chat.id)
+    order_sn = c.data[11:]
+    attempts = _dep_attempts.get(order_sn,0)
+    if attempts >= 8:
+        bot.answer_callback_query(c.id,"❌ Too many attempts. Contact support.",show_alert=True); return
+    _dep_attempts[order_sn] = attempts+1
+
+    sess = fb.get(f"deposit_sessions/{order_sn}") or {}
+    kimipay_id = sess.get("kimipay_order_id","") or get_temp(cid).get("kimipay_order_id","")
+    result = kimipay.query_order(kimipay_id)
+    status = result.get("status","pending")
+
+    if status in ("success","paid","completed"):
+        _dep_attempts.pop(order_sn,None)
+        amount = sess.get("amount",0) or result.get("amount",0)
+        u = get_user(cid)
+        new_bal = u.get("wallet",0)+amount
+        fb.patch(f"users/{cid}",{"wallet":new_bal,"total_deposit":u.get("total_deposit",0)+amount})
+        fb.patch(f"deposit_sessions/{order_sn}",{"status":"completed"})
+        fb.patch(f"users/{cid}/transactions/{order_sn}",{"status":"success"})
+        clear_state(cid)
+        send_msg(cid,
+            f"✅ *Deposit Successful!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Added: *{fmt_price(amount)}*\n"
+            f"👛 New Balance: *{fmt_price(new_bal)}*",
+            reply_markup=kb_main())
+        send_notify(f"💰 *Deposit!* {u.get('full_name',cid)} deposited {fmt_price(amount)}")
+    else:
+        remaining = 8-_dep_attempts.get(order_sn,0)
+        bot.answer_callback_query(c.id,
+            f"⏳ Not confirmed yet. ({remaining} tries left)",show_alert=True)
+
+# ── Withdraw ──────────────────────────────────────────────────────────────────
+@bot.callback_query_handler(func=lambda c: c.data=="wallet_withdraw")
+def cb_withdraw(c):
+    bot.answer_callback_query(c.id)
+    cid = str(c.message.chat.id)
+    set_state(cid,"wait_withdraw_amount")
+    send_msg(cid,
+        f"🏦 *Withdraw from Wallet*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Minimum: *{fmt_price(MIN_WITHDRAWAL())}*\n"
+        f"Maximum: *{fmt_price(MAX_WITHDRAWAL())}*\n\n"
+        f"Enter withdrawal amount (₹):",
+        reply_markup=kb_cancel())
+
+@bot.message_handler(func=lambda m: get_state(str(m.chat.id))=="wait_withdraw_amount")
+def handle_withdraw_amt(msg):
+    cid = str(msg.chat.id)
+    if _guard_cancel(msg): msg_cancel(msg); return
+    if not msg.text or not msg.text.strip().isdigit():
+        send_msg(cid,"❌ Enter a valid amount:",reply_markup=types.ForceReply(selective=True)); return
+    amount = int(msg.text.strip())
+    u = get_user(cid)
+    wallet = u.get("wallet",0)
+    if amount < MIN_WITHDRAWAL():
+        send_msg(cid,f"❌ Minimum is *{fmt_price(MIN_WITHDRAWAL())}*:",reply_markup=types.ForceReply(selective=True)); return
+    if amount > MAX_WITHDRAWAL():
+        send_msg(cid,f"❌ Maximum is *{fmt_price(MAX_WITHDRAWAL())}*:",reply_markup=types.ForceReply(selective=True)); return
+    if amount > wallet:
+        send_msg(cid,f"❌ Insufficient balance. Wallet: *{fmt_price(wallet)}*:",reply_markup=types.ForceReply(selective=True)); return
+    upd_temp(cid,{"withdraw_amount":amount})
+    set_state(cid,"wait_withdraw_account")
+    send_msg(cid,"🏦 Enter your *UPI ID / Bank Account Number*:",
+        reply_markup=types.ForceReply(selective=True))
+
+@bot.message_handler(func=lambda m: get_state(str(m.chat.id))=="wait_withdraw_account")
+def handle_withdraw_acc(msg):
+    cid = str(msg.chat.id)
+    if _guard_cancel(msg): msg_cancel(msg); return
+    temp = get_temp(cid)
+    amount = temp.get("withdraw_amount",0)
+    u = get_user(cid)
+    wd_id = gen_order_id()
+    fb.put(f"withdrawals/{wd_id}",{
+        "chat_id":cid,"user_name":u.get("full_name",""),"amount":amount,
+        "account":msg.text.strip(),"status":"pending","created_at":now_str()
+    })
+    fb.patch(f"users/{cid}",{"wallet":u.get("wallet",0)-amount})
+    fb.put(f"users/{cid}/transactions/{wd_id}",{
+        "type":"withdrawal","for":msg.text.strip(),
+        "amount":-amount,"status":"pending","date":now_str()
+    })
+    clear_state(cid)
+    send_msg(cid,
+        f"✅ *Withdrawal Requested!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Amount: *{fmt_price(amount)}*\n"
+        f"🏦 Account: `{msg.text.strip()}`\n"
+        f"⏳ Processing: 24–48 hrs",
+        reply_markup=kb_main())
+    send_notify(f"🏦 *Withdrawal!* {u.get('full_name',cid)} requested {fmt_price(amount)}")
+
+# ── Wallet ────────────────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text=="💰 Wallet")
 def msg_wallet(msg):
     if not _guard(msg): return
     _show_wallet(str(msg.chat.id))
 
-@bot.callback_query_handler(func=lambda c: c.data in ("wallet","wallet_home"))
-def cb_wallet(c):
-    _show_wallet(str(c.message.chat.id), c.message.message_id)
-
 def _show_wallet(cid, mid=None):
     u = get_user(cid)
     if not u: return
-    m = types.InlineKeyboardMarkup(row_width=2)
-    m.add(
-        types.InlineKeyboardButton("➕ Add Money",  callback_data="wallet_deposit"),
-        types.InlineKeyboardButton("➖ Withdraw",   callback_data="wallet_withdraw"),
-    )
-    m.add(types.InlineKeyboardButton("📜 Transaction History", callback_data="txn_history"))
+    mk = types.InlineKeyboardMarkup(row_width=2)
+    mk.add(types.InlineKeyboardButton("➕ Add Money", callback_data="wallet_deposit"),
+           types.InlineKeyboardButton("➖ Withdraw",  callback_data="wallet_withdraw"))
     text = (
         f"💰 *My Wallet*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💵 Balance: *₹{u.get('wallet',0):,.2f}*\n"
-        f"📥 Total Deposited: *₹{u.get('total_deposit',0):,.2f}*\n"
-        f"🛍️ Total Spent: *₹{u.get('total_spent',0):,.2f}*\n"
-        f"💸 Total Earned: *₹{u.get('total_earned',0):,.2f}*\n"
+        f"💵 Balance: *{fmt_price(u.get('wallet',0))}*\n"
+        f"📥 Total Deposited: *{fmt_price(u.get('total_deposit',0))}*\n"
+        f"🛍️ Total Spent: *{fmt_price(u.get('total_spent',0))}*\n"
+        f"💸 Total Earned: *{fmt_price(u.get('total_earned',0))}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━"
     )
     if mid:
-        try: bot.edit_message_text(text, cid, mid, parse_mode="Markdown", reply_markup=m); return
+        try: bot.edit_message_text(text,cid,mid,parse_mode="Markdown",reply_markup=mk); return
         except: pass
-    bot.send_message(cid, text, parse_mode="Markdown", reply_markup=m)
+    bot.send_message(cid,text,parse_mode="Markdown",reply_markup=mk)
 
-@bot.callback_query_handler(func=lambda c: c.data == "wallet_deposit")
-def cb_deposit(c):
-    cid = str(c.message.chat.id)
-    set_state(cid, "wait_deposit_amount")
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    bot.send_message(cid, "💵 *Add Money to Wallet*\n━━━━━━━━━━━━━━━━━━━━━\nEnter amount to deposit (₹):", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True))
-
-@bot.callback_query_handler(func=lambda c: c.data == "wallet_withdraw")
-def cb_withdraw(c):
-    cid = str(c.message.chat.id)
-    set_state(cid, "wait_withdraw_amount")
-    try: bot.delete_message(cid, c.message.message_id)
-    except: pass
-    bot.send_message(cid, f"🏦 *Withdraw from Wallet*\n━━━━━━━━━━━━━━━━━━━━━\nMinimum: ₹{MIN_WITHDRAWAL}\n\nEnter withdrawal amount:", parse_mode="Markdown", reply_markup=types.ForceReply(selective=True))
-
-@bot.callback_query_handler(func=lambda c: c.data == "txn_history")
-def cb_txn_history(c):
-    cid = str(c.message.chat.id)
-    txns = fb.get("transactions") or {}
-    my = [(tid,td) for tid,td in txns.items() if td.get("chat_id")==cid]
-    if not my:
-        bot.answer_callback_query(c.id, "No transactions yet"); return
-    lines = ["📜 *Transaction History*\n━━━━━━━━━━━━━━━━━━━━━"]
-    for tid, td in sorted(my, key=lambda x: x[1].get("created_at",""), reverse=True)[:10]:
-        st = "✅" if td.get("status")=="success" else ("❌" if td.get("status")=="failed" else "⏳")
-        lines.append(f"{st} {td.get('type','').upper()} ₹{td.get('amount',0)} — {td.get('created_at','')[:10]}")
-    bot.send_message(cid, "\n".join(lines), parse_mode="Markdown")
-
-# ─────────────────────────────────────────────
-# HISTORY
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "📜 History")
-def msg_history(msg):
+# ── Transactions ──────────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text=="💳 Transactions")
+def msg_transactions(msg):
     if not _guard(msg): return
     cid = str(msg.chat.id)
-    hist = fb.get(f"users/{cid}/purchase_history") or {}
-    if not hist:
-        bot.send_message(cid, "📜 *Purchase History*\n━━━━━━━━━━━━━━━━━━━━━\nNo purchases yet!", parse_mode="Markdown"); return
-    lines = ["📜 *Purchase History*\n━━━━━━━━━━━━━━━━━━━━━"]
-    for oid, od in sorted(hist.items(), key=lambda x: x[1].get("date",""), reverse=True)[:10]:
-        st = {"success":"✅","pending":"⏳","failed":"❌"}.get(od.get("status","pending"),"⏳")
-        lines.append(f"{st} *{od.get('product','')}*\n   ₹{od.get('price',0)} | {od.get('date','')[:10]}")
-    bot.send_message(cid, "\n".join(lines), parse_mode="Markdown")
+    txns = fb.get(f"users/{cid}/transactions") or {}
+    if not txns:
+        send_msg(cid,"💳 *Transactions*\n━━━━━━━━━━━━━━━━━━━━━\nNo transactions yet."); return
+    lines = ["💳 *Transaction History*\n━━━━━━━━━━━━━━━━━━━━━"]
+    icons = {"purchase":"🛍️","deposit":"💵","withdrawal":"🏦","referral":"🤝"}
+    status_icons = {"success":"✅","pending":"⏳","failed":"❌"}
+    for tid,td in sorted(txns.items(),key=lambda x:x[1].get("date",""),reverse=True)[:15]:
+        icon = icons.get(td.get("type",""),"📋")
+        st = status_icons.get(td.get("status","pending"),"⏳")
+        amt = td.get("amount",0)
+        amt_str = f"+{fmt_price(amt)}" if amt>0 else fmt_price(amt)
+        lines.append(
+            f"{st} {icon} *{td.get('type','').title()}*\n"
+            f"   For: {td.get('for','')}\n"
+            f"   Amount: *{amt_str}* | {td.get('date','')[:16]}")
+    send_msg(cid,"\n\n".join(lines))
 
-# ─────────────────────────────────────────────
-# RULES
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "📋 Rules")
+# ── Refer & Earn ──────────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text in ("👥 Refer & Earn","👤 My Referrals"))
+def msg_refer(msg):
+    if not _guard(msg): return
+    cid = str(msg.chat.id)
+    u = get_user(cid)
+    if not u: return
+    rc = u.get("refer_code","")
+    uname = BOT_USERNAME()
+    link = f"https://t.me/{uname}?start={rc}"
+    comm = REFER_COMMISSION()
+    if msg.text == "👤 My Referrals":
+        refs = fb.get(f"referrals/{cid}") or {}
+        lines = ["👤 *My Referrals*\n━━━━━━━━━━━━━━━━━━━━━"]
+        if not refs:
+            lines.append("No referrals yet.\n\n📤 Share your link to start earning!")
+        else:
+            for i,(rid,rd) in enumerate(refs.items(),1):
+                st = "✅" if rd.get("status")=="verified" else "⏳"
+                lines.append(f"{i}. {st} *{rd.get('name','User')}*\n   💰 Earned: {fmt_price(rd.get('earned',0))}")
+        send_msg(cid,"\n".join(lines))
+    else:
+        send_msg(cid,
+            f"👥 *Refer & Earn*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💸 Earn *{comm}% commission* on every purchase by your referrals!\n\n"
+            f"🔗 *Your Referral Link:*\n`{link}`\n\n"
+            f"📊 *Stats:*\n"
+            f"  👥 Total: *{u.get('refer_count',0)}*\n"
+            f"  ✅ Verified: *{u.get('verified_refer',0)}*\n"
+            f"  ⏳ Pending: *{u.get('pending_refer',0)}*\n"
+            f"  💰 Total Earned: *{fmt_price(u.get('total_earned',0))}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📤 Share and start earning!")
+
+# ── Rules ─────────────────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text=="📋 Rules")
 def msg_rules(msg):
     if not _guard(msg): return
-    bot.send_message(str(msg.chat.id), RULES_TEXT, parse_mode="Markdown")
+    send_msg(str(msg.chat.id), RULES_TEXT())
 
-# ─────────────────────────────────────────────
-# CUSTOMER SUPPORT
-# ─────────────────────────────────────────────
-@bot.message_handler(func=lambda m: m.text == "📞 Customer Support")
+# ── Support ───────────────────────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.text=="📞 Support")
 def msg_support(msg):
     if not _guard(msg): return
-    m = types.InlineKeyboardMarkup()
-    m.add(types.InlineKeyboardButton("💬 Contact Support", url=f"https://t.me/{SUPPORT_USERNAME.lstrip('@')}"))
-    bot.send_message(str(msg.chat.id),
+    sup = SUPPORT_USERNAME()
+    mk = types.InlineKeyboardMarkup()
+    mk.add(types.InlineKeyboardButton("💬 Contact Support",url=f"https://t.me/{sup.lstrip('@')}"))
+    send_msg(str(msg.chat.id),
         f"📞 *Customer Support*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕐 Available: 24/7\n"
-        f"📬 Contact: {SUPPORT_USERNAME}\n\n"
-        f"For queries:\n"
-        f"• Order issues\n• Payment problems\n• Account help\n"
+        f"📬 Contact: {sup}\n\n"
+        f"For:\n• Order issues\n• Payment problems\n• Account help\n"
         f"━━━━━━━━━━━━━━━━━━━━━",
-        parse_mode="Markdown", reply_markup=m)
+        reply_markup=mk)
 
-# ─────────────────────────────────────────────
-# ADMIN BROADCAST (from Flask admin panel)
-# ─────────────────────────────────────────────
+# ── Broadcast (called by admin panel) ────────────────────────────────────────
 def broadcast_message(text=None, image_url=None, chat_ids=None):
-    """Called by admin panel to send messages to all/selected users."""
     if not chat_ids:
         users = fb.get("users") or {}
         chat_ids = list(users.keys())
-    ok, fail = 0, 0
+    ok=fail=0
     for cid in chat_ids:
         try:
             if image_url and text:
-                bot.send_photo(cid, image_url, caption=text, parse_mode="Markdown")
+                bot.send_photo(cid,image_url,caption=text,parse_mode="Markdown")
             elif image_url:
-                bot.send_photo(cid, image_url)
+                bot.send_photo(cid,image_url)
             elif text:
-                bot.send_message(cid, text, parse_mode="Markdown")
+                bot.send_message(cid,text,parse_mode="Markdown")
             else:
-                continue  # nothing to send
-            ok += 1
-            time.sleep(0.05)
+                continue
+            ok+=1; time.sleep(0.04)
         except Exception as e:
-            print(f"[Broadcast] Failed {cid}: {e}")
-            fail += 1
-    return ok, fail
+            print(f"[Broadcast] {cid}: {e}"); fail+=1
+    return ok,fail
+
+def notify_order_status(order_id, new_status):
+    """Called by admin when updating order status."""
+    order = fb.get(f"orders/{order_id}")
+    if not order: return
+    cid = order.get("chat_id")
+    if not cid: return
+    is_cart = bool(order.get("items"))
+    product = order.get("product_name") or (f"{len(order.get('items',{}))} item(s)" if is_cart else "Order")
+    icons = {"processing":"⚙️","completed":"✅","failed":"❌","pending":"⏳","cancelled":"🚫"}
+    icon = icons.get(new_status,"📋")
+    send_msg(cid,
+        f"{icon} *Order Update!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Order: `{order_id}`\n"
+        f"📦 {product}\n"
+        f"💰 Amount: {fmt_price(order.get('price',order.get('total',0)))}\n"
+        f"📊 New Status: *{new_status.title()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━")
+    # Update user transaction status too
+    fb.patch(f"users/{cid}/transactions/{order_id}",{"status":new_status})
+    # notify admins
+    send_notify(f"📋 Order `{order_id}` → *{new_status}* by admin")
 
 def run_bot():
-    print("🤖 Bot starting...")
-    bot.infinity_polling(timeout=30, long_polling_timeout=30)
+    if not bot:
+        print("❌ Bot not started — no BOT_TOKEN in Firebase /config"); return
+    print("🤖 Bot polling started")
+    bot.infinity_polling(timeout=30,long_polling_timeout=30,restart_on_change=False)
