@@ -1,73 +1,74 @@
 {% extends "base.html" %}
 {% block title %}Broadcast{% endblock %}
-{% block page_title %}📢 Broadcast Message{% endblock %}
+{% block page_title %}📣 Broadcast{% endblock %}
 {% block content %}
-<div class="page-header"><h2>Send Broadcast</h2></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-  <div class="form-card">
-    <h3 style="margin-bottom:20px;font-size:.95rem;color:var(--muted)">📤 Compose Message</h3>
-    {% if result %}
-      {% if result.error %}
-      <div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i>Error: {{ result.error }}</div>
-      {% else %}
-      <div class="alert alert-success">
-        <i class="fa-solid fa-check-circle"></i>
-        Sent to <b>{{ result.ok }}</b> users. Failed: <b>{{ result.fail }}</b>
-      </div>
-      {% endif %}
-    {% endif %}
-    <form method="POST">
-      <div class="form-group">
-        <label class="form-label">📷 Image URL (optional)</label>
-        <input name="image_url" class="form-control" placeholder="https://example.com/banner.jpg"
-               id="bcImgUrl" oninput="previewBcImg(this.value)"/>
-      </div>
-      <div id="bcImgPreview" style="display:none;margin-bottom:14px">
-        <img id="bcImgEl" src="" style="max-height:140px;border-radius:8px;border:1px solid var(--border)"/>
-      </div>
-      <div class="form-group">
-        <label class="form-label">💬 Message Text (Markdown supported)</label>
-        <textarea name="message" class="form-control" style="min-height:180px;font-family:monospace"
-                  placeholder="*Hello* everyone!\n\nNew products available..."></textarea>
-      </div>
-      <div style="background:var(--card2);border-radius:8px;padding:12px;margin-bottom:18px;font-size:.8rem;color:var(--muted)">
-        <b>Markdown tips:</b><br>
-        *bold* • _italic_ • `code` • [link](url)
-      </div>
-      <button type="submit" class="btn btn-primary" onclick="return confirm('Send to ALL users?')">
-        <i class="fa-solid fa-paper-plane"></i> Send to All Users
-      </button>
-    </form>
-  </div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:1000px">
+
   <div>
     <div class="form-card">
-      <h3 style="margin-bottom:14px;font-size:.95rem;color:var(--muted)">💡 Tips</h3>
-      <ul style="font-size:.82rem;color:var(--muted);line-height:2.2;padding-left:16px">
-        <li>You can send text-only or image-only</li>
-        <li>Or send both image + caption</li>
-        <li>Markdown formatting works in text</li>
-        <li>Rate limited to ~20 msg/sec</li>
-        <li>Failed sends are silently skipped</li>
-      </ul>
-    </div>
-    <div class="form-card" style="margin-top:16px">
-      <h3 style="margin-bottom:12px;font-size:.95rem;color:var(--muted)">🔢 Preview</h3>
-      <div id="msgPreview" style="background:var(--bg);border-radius:8px;padding:14px;
-        border:1px solid var(--border);min-height:80px;font-size:.85rem;color:var(--text);
-        white-space:pre-wrap">Message preview will appear here…</div>
+      <h3 style="margin-bottom:16px;font-size:.9rem">📤 Send New Broadcast</h3>
+      {% if result %}
+        {% if result.error %}
+          <div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i>{{ result.error }}</div>
+        {% else %}
+          <div class="alert alert-success"><i class="fa-solid fa-check-circle"></i>
+            Sent to {{ result.ok }} users. Failed: {{ result.fail }}
+          </div>
+        {% endif %}
+      {% endif %}
+      <form method="POST">
+        <div class="form-group">
+          <label class="form-label">Message Text (Markdown)</label>
+          <textarea name="message" class="form-control" rows="7"
+            placeholder="*Bold* _italic_ \`code\`&#10;&#10;Write your broadcast here..."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Image URL (optional)</label>
+          <input name="image_url" class="form-control" placeholder="https://example.com/image.jpg"/>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%"
+                onclick="return confirm('Send broadcast to ALL users?')">
+          <i class="fa-solid fa-bullhorn"></i> Send to All Users
+        </button>
+      </form>
     </div>
   </div>
+
+  <div>
+    <div class="table-card">
+      <div class="table-header">
+        <h3>📜 Broadcast History</h3>
+      </div>
+      <div style="max-height:520px;overflow-y:auto">
+      {% for b in broadcasts %}
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+            <div style="flex:1">
+              {% if b.image_url %}
+                <div style="margin-bottom:6px">
+                  <img src="{{ b.image_url }}" style="max-width:80px;border-radius:6px;object-fit:cover"/>
+                </div>
+              {% endif %}
+              <div style="font-size:.82rem;line-height:1.4;white-space:pre-wrap;word-break:break-word">{{ b.text or '(image only)' }}</div>
+              <div style="font-size:.7rem;color:var(--muted);margin-top:6px">
+                <i class="fa-regular fa-clock"></i> {{ (b.sent_at or '')[:16] }}
+                &nbsp;✅ {{ b.ok or 0 }} sent &nbsp;❌ {{ b.fail or 0 }} failed
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+              <form method="POST" action="/broadcast/{{ b._id }}/delete"
+                    onsubmit="return confirm('Delete broadcast record?')">
+                <button class="btn btn-ghost btn-sm" title="Delete"><i class="fa-solid fa-trash"></i></button>
+              </form>
+            </div>
+          </div>
+        </div>
+      {% else %}
+        <div class="empty-state"><i class="fa-solid fa-bullhorn"></i>No broadcasts yet</div>
+      {% endfor %}
+      </div>
+    </div>
+  </div>
+
 </div>
-{% block scripts %}
-<script>
-function previewBcImg(url){
-  const el=document.getElementById('bcImgEl');
-  const box=document.getElementById('bcImgPreview');
-  if(url){el.src=url;box.style.display='block';}else{box.style.display='none';}
-}
-document.querySelector('[name=message]').addEventListener('input',function(){
-  document.getElementById('msgPreview').textContent = this.value || 'Message preview…';
-});
-</script>
-{% endblock %}
 {% endblock %}
