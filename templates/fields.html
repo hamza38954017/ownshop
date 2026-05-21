@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Field Definitions{% endblock %}
+{% block page_title %}🧩 Field Definitions{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Input Field Definitions</h2>
+  <button class="btn btn-primary" onclick="openModal('addModal')"><i class="fa-solid fa-plus"></i> Add Field</button>
+</div>
+<p style="color:var(--muted);font-size:.82rem;margin-bottom:18px">Define reusable fields. Attach them to products — users fill them at checkout.</p>
+
+<div class="table-card">
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Label</th><th>Type</th><th>Required</th><th>Max Length</th><th>Validate</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for fid,f in fields.items() %}
+  <tr>
+    <td><b>{{ f.label }}</b></td>
+    <td><span class="chip">{{ f.type }}</span></td>
+    <td>{{ '✅ Yes' if f.required else '—' }}</td>
+    <td>{{ f.max_length or 200 }}</td>
+    <td><code>{{ f.validate or '—' }}</code></td>
+    <td>
+      <form method="POST" action="/fields/{{ fid }}/delete" style="display:inline"
+            onsubmit="return confirm('Delete field?')">
+        <button class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6"><div class="empty-state"><i class="fa-solid fa-list-check"></i>No fields yet</div></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+
+<!-- Add Modal -->
+<div class="modal-overlay" id="addModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('addModal')"><i class="fa-solid fa-xmark"></i></button>
+    <h3 style="margin-bottom:18px">➕ Add Field</h3>
+    <form method="POST" action="/fields/add">
+      <div class="form-group">
+        <label class="form-label">Label *</label>
+        <input name="label" class="form-control" required placeholder="e.g. Free Fire UID"/>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select name="type" class="form-control">
+            <option value="text">text (any string)</option>
+            <option value="email">email</option>
+            <option value="mobile">mobile (7-15 digits)</option>
+            <option value="uid">uid (numeric ≥6 digits)</option>
+            <option value="number">number</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Required?</label>
+          <select name="required" class="form-control">
+            <option value="1">✅ Yes</option>
+            <option value="0">No</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Max Length</label>
+          <input name="max_length" type="number" class="form-control" value="200"/>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Validate (optional)</label>
+          <input name="validate" class="form-control" placeholder="e.g. gmail"/>
+          <div class="form-hint">Extra validation hint (gmail, etc)</div>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%"><i class="fa-solid fa-save"></i> Add Field</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
