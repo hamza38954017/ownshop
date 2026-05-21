@@ -6,8 +6,12 @@ Signature: MD5(sorted_params + &key=API_KEY).upper()
 import hashlib, requests
 import firebase_helper as fb
 
-BASE = "https://kimipay.in/api"
 TIMEOUT = 15
+
+def _base():
+    """Read API base URL from Firebase config, fallback to default."""
+    url = (fb.get("config/kimipay_base_url") or "").strip().rstrip("/")
+    return url if url else "https://kimipay.in/api"
 
 def _creds():
     cfg = fb.get("config") or {}
@@ -31,7 +35,7 @@ def create_order(amount:int, order_sn:str, description:str="",
     sig_p = {k:v for k,v in params.items() if k not in ("callback_url","description","customer_email")}
     params["signature"] = _sign(sig_p, api_key)
     try:
-        r = requests.post(f"{BASE}/order/create", json=params, timeout=TIMEOUT)
+        r = requests.post(f"{_base()}/order/create", json=params, timeout=TIMEOUT)
         d = r.json()
         if d.get("status") == 1:
             return {"success":True,"kimipay_order_id":d["data"]["order_id"],
@@ -49,7 +53,7 @@ def query_order(kimipay_order_id:str) -> dict:
     params = {"app_id":app_id,"merchant_api_key":api_key,"order_id":kimipay_order_id}
     params["signature"] = _sign(params, api_key)
     try:
-        r = requests.post(f"{BASE}/order/query", json=params, timeout=TIMEOUT)
+        r = requests.post(f"{_base()}/order/query", json=params, timeout=TIMEOUT)
         d = r.json()
         if d.get("status") == 1:
             return {"success":True,"status":d["data"]["status"],
