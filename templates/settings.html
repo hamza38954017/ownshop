@@ -34,6 +34,11 @@
       <input name="kimipay_api_key" class="form-control" value="{{ cfg.get('kimipay_api_key','') }}" type="password"/>
     </div>
     <div class="form-group">
+      <label class="form-label">KimiPay Base URL</label>
+      <input name="kimipay_base_url" class="form-control" value="{{ cfg.get('kimipay_base_url','https://kimipay.in/api') }}" placeholder="https://kimipay.in/api"/>
+      <div class="form-hint">Default: https://kimipay.in/api — change only if KimiPay updates their endpoint.</div>
+    </div>
+    <div class="form-group">
       <label class="form-label">Callback URL (set in KimiPay dashboard)</label>
       <input class="form-control" value="{{ request.host_url }}callback/kimipay" readonly
         onclick="this.select()" style="cursor:pointer;font-family:monospace;font-size:.78rem"/>
@@ -72,7 +77,9 @@
     </div>
     <div class="form-group">
       <label class="form-label">Admin Password</label>
-      <input name="admin_password" class="form-control" type="password" placeholder="Leave blank to keep current"/>
+      <input name="admin_password" class="form-control" type="password"
+             placeholder="Leave blank to keep current password" autocomplete="new-password"/>
+      <div class="form-hint" style="color:var(--yellow)">⚠️ Only fill this to change your password. Leave blank to keep existing.</div>
     </div>
   </div>
 
