@@ -8,6 +8,7 @@ from functools import wraps
 import datetime, json, threading
 import firebase_helper as fb
 from config import SECRET_KEY, FLASK_PORT, ADMIN_USERNAME, ADMIN_PASSWORD, PANEL_NAME
+import datetime as _dt
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
@@ -518,7 +519,7 @@ def settings():
     if request.method=="POST":
         # Keys saved always (blank is valid for these)
         normal_keys = [
-            "bot_token","bot_username","support_username",
+            "bot_token","bot_username","support_username","support_bot_token","support_greeting","support_auto_reply",
             "payment_link","rules_text",
             "panel_name","panel_copyright",
             "refer_commission","min_deposit","min_withdrawal","max_withdrawal",
@@ -547,7 +548,103 @@ def settings():
     cfg = fb.get("config") or {}
     return render_template("settings.html",cfg=cfg)
 
+# ── Customer Support ─────────────────────────────────────────────────────────
+@app.route("/support")
+@login_required
+def support():
+    convos = fb.get("support") or {}
+    chats = []
+    for cid, data in convos.items():
+        meta = data.get("meta", {})
+        if not meta: continue
+        chats.append({
+            "chat_id":      cid,
+            "user_name":    meta.get("user_name", cid),
+            "username":     meta.get("username",""),
+            "last_message": meta.get("last_message",""),
+            "last_time":    meta.get("last_time",""),
+            "last_ts":      meta.get("last_ts",0),
+            "unread":       meta.get("unread",0),
+        })
+    chats.sort(key=lambda x: x.get("last_ts",0), reverse=True)
+    return render_template("support.html", chats=chats)
+
+@app.route("/support/<cid>")
+@login_required
+def support_chat(cid):
+    data = fb.get(f"support/{cid}") or {}
+    meta = data.get("meta", {})
+    msgs_raw = data.get("messages", {}) or {}
+    msgs = sorted(msgs_raw.values(), key=lambda m: m.get("ts",0))
+    # Mark all user messages as read
+    for mid, m in msgs_raw.items():
+        if m.get("from")=="user" and not m.get("read"):
+            fb.patch(f"support/{cid}/messages/{mid}", {"read": True})
+    fb.patch(f"support/{cid}/meta", {"unread": 0})
+    return render_template("support_chat.html", cid=cid, meta=meta, messages=msgs)
+
+@app.route("/support/<cid>/send", methods=["POST"])
+@login_required
+def support_send(cid):
+    text      = request.form.get("text","").strip()
+    image_url = request.form.get("image_url","").strip()
+    if not text and not image_url:
+        return jsonify({"error":"Empty message"})
+    try:
+        import support_bot as sb
+        result = sb.admin_reply(cid, text, image_url)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route("/support/<cid>/messages", methods=["GET"])
+@login_required
+def support_messages(cid):
+    """Poll for new messages (used by JS long-polling)."""
+    msgs_raw = fb.get(f"support/{cid}/messages") or {}
+    msgs = sorted(msgs_raw.values(), key=lambda m: m.get("ts",0))
+    return jsonify(msgs)
+
+@app.route("/support/<cid>/message/<mid>/edit", methods=["POST"])
+@login_required
+def support_edit_msg(cid, mid):
+    new_text = request.form.get("text","").strip()
+    if not new_text: return jsonify({"error":"Empty"})
+    try:
+        import support_bot as sb
+        return jsonify(sb.admin_edit_message(cid, mid, new_text))
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route("/support/<cid>/message/<mid>/delete", methods=["POST"])
+@login_required
+def support_delete_msg(cid, mid):
+    try:
+        import support_bot as sb
+        if mid.startswith("admin_"):
+            return jsonify(sb.admin_delete_message(cid, mid))
+        # User message — only delete from Firebase (can't delete user msgs from bot)
+        fb.delete(f"support/{cid}/messages/{mid}")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route("/support/<cid>/clear", methods=["POST"])
+@login_required
+def support_clear(cid):
+    fb.delete(f"support/{cid}/messages")
+    fb.patch(f"support/{cid}/meta", {"unread":0,"last_message":"(cleared)"})
+    flash("Chat cleared","success")
+    return redirect(url_for("support"))
+
 # ── Health ────────────────────────────────────────────────────────────────────
+@app.route("/support/unread_count")
+@login_required
+def support_unread_count():
+    convos = fb.get("support") or {}
+    total = sum((v.get("meta",{}).get("unread",0)) for v in convos.values() if isinstance(v,dict))
+    return jsonify({"count": total})
+
 @app.route("/health")
 def health():
     return jsonify({"status":"ok"})
@@ -560,13 +657,25 @@ def _start_bot():
         import bot as tbot
         if tbot.bot:
             _th.Thread(target=tbot.run_bot,daemon=True).start()
-            print("🤖 Bot thread started")
+            print("🤖 Shop bot thread started")
         else:
-            print("⚠️ Bot token missing — check Firebase /config/bot_token")
+            print("⚠️ Shop bot token missing — check BOT_TOKEN env var or Firebase /config/bot_token")
     except Exception as e:
         print(f"⚠️ Bot thread error: {e}")
 
+def _start_support_bot():
+    try:
+        import support_bot as sb
+        if sb.support_bot:
+            _th.Thread(target=sb.run_support_bot,daemon=True).start()
+            print("🎧 Support bot thread started")
+        else:
+            print("⚠️ Support bot token missing — set SUPPORT_BOT_TOKEN env var or Firebase /config/support_bot_token")
+    except Exception as e:
+        print(f"⚠️ Support bot thread error: {e}")
+
 _start_bot()
+_start_support_bot()
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=FLASK_PORT,debug=False)
