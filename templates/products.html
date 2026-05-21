@@ -1,86 +1,82 @@
 {% extends "base.html" %}
-{% block title %}Products — HamzaShop Admin{% endblock %}
+{% block title %}Products{% endblock %}
 {% block page_title %}📦 Products{% endblock %}
-
 {% block content %}
 <div class="page-header">
-  <h2>Products</h2>
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <form method="GET" style="display:flex;gap:8px">
-      <select name="category" class="form-control" style="width:180px;padding:7px 10px">
-        <option value="">All Categories</option>
-        <option value="cat_ff_diamond" {% if cat_filter=='cat_ff_diamond' %}selected{% endif %}>💎 FF Diamond</option>
-        <option value="cat_pubg_uc"    {% if cat_filter=='cat_pubg_uc'    %}selected{% endif %}>🎮 PUBG UC</option>
-        <option value="cat_mobile"     {% if cat_filter=='cat_mobile'     %}selected{% endif %}>📱 Mobile</option>
-        <option value="cat_laptop"     {% if cat_filter=='cat_laptop'     %}selected{% endif %}>💻 Laptop</option>
-        <option value="cat_other"      {% if cat_filter=='cat_other'      %}selected{% endif %}>🎁 Other</option>
-        {% for c in categories %}
-        <option value="{{ c._id }}" {% if cat_filter==c._id %}selected{% endif %}>{{ c.emoji }} {{ c.name }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-outline btn-sm"><i class="fa-solid fa-filter"></i> Filter</button>
-    </form>
-    <a href="{{ url_for('add_product') }}" class="btn btn-primary">
-      <i class="fa-solid fa-plus"></i> Add Product
-    </a>
-  </div>
+  <h2>{{ products|length }} Products</h2>
+  <a href="{{ url_for('add_product') }}" class="btn btn-primary"><i class="fa-solid fa-plus"></i> Add Product</a>
 </div>
-
 <div class="table-card">
-  <div class="table-header"><h3>{{ products|length }} product(s)</h3></div>
   <div class="table-wrap">
     <table>
-      <thead>
-        <tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Views</th><th>Status</th><th>Actions</th></tr>
-      </thead>
+      <thead><tr><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Fields</th><th>Views</th><th>Active</th><th>Actions</th></tr></thead>
       <tbody>
-      {% set cat_map = {
-        'cat_ff_diamond':'💎 FF Diamond','cat_pubg_uc':'🎮 PUBG UC',
-        'cat_mobile':'📱 Mobile','cat_laptop':'💻 Laptop','cat_other':'🎁 Other'
-      } %}
       {% for p in products %}
-      <tr>
-        <td>
-          <div style="display:flex;align-items:center;gap:10px">
-            {% if p.image_url %}
-            <img src="{{ p.image_url }}" style="width:36px;height:36px;border-radius:8px;object-fit:cover"/>
-            {% else %}
-            <div style="width:36px;height:36px;border-radius:8px;background:var(--card2);display:flex;align-items:center;justify-content:center;font-size:1rem">📦</div>
-            {% endif %}
-            <div>
-              <div style="font-weight:500">{{ p.name }}</div>
-              <div style="font-size:.72rem;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.description or '' }}</div>
+        <tr>
+          <td>
+            {% if p.image_url %}<img src="{{ p.image_url }}" style="width:28px;height:28px;border-radius:6px;object-fit:cover;margin-right:6px;vertical-align:middle">{% endif %}
+            <b>{{ p.name }}</b>
+            {% if p.description %}<div style="font-size:.73rem;color:var(--muted)">{{ p.description[:40] }}{% if p.description|length>40 %}…{% endif %}</div>{% endif %}
+          </td>
+          <td><span class="chip">{{ p.category_name }}</span></td>
+          <td><b>₹{{ "%.0f"|format(p.price|float) }}</b></td>
+          <td>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span class="badge {{ 'success' if p.stock and p.stock|int > 0 else 'failed' }}">
+                {{ p.get('stock','∞') }}</span>
+              <button class="btn-ghost" onclick="openModal('stock_{{ p._id }}')">
+                <i class="fa-solid fa-pen" style="font-size:.7rem"></i>
+              </button>
             </div>
+          </td>
+          <td>
+            {% if p.fields %}
+              {% for f in p.fields %}<span class="chip">{{ f.label }}</span> {% endfor %}
+            {% else %}—{% endif %}
+          </td>
+          <td style="color:var(--muted)">{{ p.views or 0 }}</td>
+          <td>
+            {% if p.active %}<span class="badge success">✅ Yes</span>
+            {% else %}<span class="badge failed">❌ No</span>{% endif %}
+          </td>
+          <td style="white-space:nowrap">
+            <a href="{{ url_for('edit_product',pid=p._id) }}" class="btn btn-outline btn-sm"><i class="fa-solid fa-pen"></i></a>
+            <form method="POST" action="{{ url_for('delete_product',pid=p._id) }}" style="display:inline"
+                  onsubmit="return confirm('Delete product?')">
+              <button class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i></button>
+            </form>
+          </td>
+        </tr>
+        <!-- Stock Modal -->
+        <div class="modal-overlay" id="stock_{{ p._id }}">
+          <div class="modal">
+            <button class="modal-close" onclick="closeModal('stock_{{ p._id }}')"><i class="fa-solid fa-xmark"></i></button>
+            <h3 style="margin-bottom:14px">Update Stock — {{ p.name }}</h3>
+            <form onsubmit="updateStock(event,'{{ p._id }}',this)">
+              <div class="form-group">
+                <label class="form-label">Stock Quantity (999 = unlimited)</label>
+                <input type="number" name="stock" class="form-control" value="{{ p.get('stock',999) }}" min="0"/>
+              </div>
+              <button type="submit" class="btn btn-primary" style="width:100%"><i class="fa-solid fa-save"></i> Update</button>
+            </form>
           </div>
-        </td>
-        <td><span class="chip">{{ cat_map.get(p.category, p.category or '—') }}</span></td>
-        <td style="font-weight:700;color:var(--green)">₹{{ p.price or 0 }}</td>
-        <td>
-          <span class="status-badge {{ 'success' if p.stock and p.stock > 0 else 'failed' }}">
-            {{ p.stock or 0 }}
-          </span>
-        </td>
-        <td style="color:var(--muted)">{{ p.views or 0 }} 👁️</td>
-        <td>
-          <span class="status-badge {{ 'success' if p.active else 'failed' }}">
-            {{ '✅ Active' if p.active else '❌ Inactive' }}
-          </span>
-        </td>
-        <td>
-          <a href="{{ url_for('edit_product', pid=p._id) }}" class="btn btn-sm btn-outline">
-            <i class="fa-solid fa-pen"></i>
-          </a>
-          <form method="POST" action="{{ url_for('delete_product', pid=p._id) }}" style="display:inline"
-                onsubmit="return confirm('Delete product?')">
-            <button class="btn btn-sm btn-danger"><i class="fa-solid fa-trash"></i></button>
-          </form>
-        </td>
-      </tr>
+        </div>
       {% else %}
-      <tr><td colspan="7"><div class="empty-state"><i class="fa-solid fa-box-open"></i><p>No products. <a href="{{ url_for('add_product') }}" style="color:var(--accent)">Add one!</a></p></div></td></tr>
+        <tr><td colspan="8"><div class="empty-state"><i class="fa-solid fa-box-open"></i>No products yet</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function updateStock(e,pid,form){
+  e.preventDefault();
+  const stock=form.stock.value;
+  const res=await fetch(`/products/${pid}/stock`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`stock=${stock}`});
+  const d=await res.json();
+  if(d.stock!==undefined){location.reload();}
+}
+</script>
 {% endblock %}
