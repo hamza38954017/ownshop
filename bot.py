@@ -1,23 +1,30 @@
 """
 HamzaShop Telegram Bot — bot.py
-All credentials stored in Firebase under /config
+BOT_TOKEN read from env variable first, fallback to Firebase /config/bot_token
 """
 import telebot
 from telebot import types
-import datetime, random, string, time, re, threading
+import datetime, random, string, time, re, threading, os
 import firebase_helper as fb
 import kimipay
 from config import (BOT_TOKEN, BOT_USERNAME, SUPPORT_USERNAME, PAYMENT_LINK,
                     RULES_TEXT, MIN_DEPOSIT, MIN_WITHDRAWAL, MAX_WITHDRAWAL,
                     REFER_COMMISSION, NOTIFY_CHAT_IDS)
 
-def make_bot():
+def _get_token():
+    # 1. Environment variable (fastest, works on Render immediately)
+    token = os.environ.get("BOT_TOKEN", "").strip()
+    if token:
+        return token
+    # 2. Fallback: Firebase /config/bot_token
     token = BOT_TOKEN()
-    if not token:
-        print("⚠️ BOT_TOKEN not set in Firebase /config/bot_token"); return None
-    return telebot.TeleBot(token, parse_mode=None)
+    if token:
+        return token
+    print("⚠️  BOT_TOKEN not found in env or Firebase /config/bot_token")
+    return None
 
-bot = make_bot()
+_BOT_TOKEN = _get_token()
+bot = telebot.TeleBot(_BOT_TOKEN, parse_mode=None) if _BOT_TOKEN else None
 
 # ── State (in-memory per gunicorn worker) ────────────────────────────────────
 user_states = {}
@@ -402,12 +409,14 @@ def cb_checkout_cart(c):
     bot.answer_callback_query(c.id)
     cid = str(c.message.chat.id)
     cart = fb.get(f"carts/{cid}") or {}
-    if not cart: bot.answer_callback_query(c.id,"🛒 Cart is empty!",show_alert=True); return
-    total = sum(v["price"]*v.get("qty",1) for v in cart.values())
+    if not cart:
+        bot.answer_callback_query(c.id,"🛒 Cart is empty!",show_alert=True); return
+    total = sum(float(v.get("price",0))*int(v.get("qty",1)) for v in cart.values())
     u = get_user(cid)
-    # Store cart in temp and start field collection for cart items
-    set_temp(cid, {"is_cart":True,"cart_items":dict(cart),"cart_total":total,"field_queue":[]})
-    # Collect fields for each cart item sequentially
+    # Store everything including explicit amount so it survives field collection
+    set_temp(cid, {"is_cart":True,"cart_items":dict(cart),
+                   "cart_total":total,"amount":total,"field_queue":[]})
+    set_state(cid,"wait_field")
     _start_cart_fields(cid, dict(cart), total, c.message.message_id, u)
 
 def _start_cart_fields(cid, cart, total, mid, u):
@@ -433,10 +442,14 @@ def _ask_next_field(cid):
     queue = temp.get("field_queue",[])
     idx = temp.get("field_index",0)
     if idx >= len(queue):
-        # All fields collected
-        total = temp.get("cart_total",0) if temp.get("is_cart") else temp.get("product",{}).get("price",0)
+        # All fields collected — use stored amount (set at start of buynow/checkout)
+        amount = temp.get("amount") or                  temp.get("cart_total",0) if temp.get("is_cart")                  else temp.get("amount") or temp.get("product",{}).get("price",0)
+        if not amount:
+            # Last resort re-derive
+            amount = temp.get("cart_total",0) or temp.get("product",{}).get("price",0)
+        clear_state(cid)
         u = get_user(cid)
-        _show_checkout_payment(cid, total, u)
+        _show_checkout_payment(cid, float(amount), u)
         return
     entry = queue[idx]
     f = entry["field"]
@@ -506,11 +519,26 @@ def cb_pay_wallet(c):
     temp = get_temp(cid)
     u = get_user(cid)
     is_cart = temp.get("is_cart",False)
-    amount = temp.get("cart_total",0) if is_cart else temp.get("product",{}).get("price",0)
-    if u.get("wallet",0) < amount:
-        bot.answer_callback_query(c.id,
-            f"❌ Insufficient balance! Wallet: {fmt_price(u.get('wallet',0))}",
-            show_alert=True); return
+    # Use explicitly stored amount first
+    amount = float(temp.get("amount") or
+                   (temp.get("cart_total",0) if is_cart
+                    else temp.get("product",{}).get("price",0)) or 0)
+    wallet = float(u.get("wallet",0))
+    if amount <= 0:
+        send_msg(cid, "❌ *Payment Error*\nCould not determine order amount. Please go back and try again.", reply_markup=kb_main()); return
+    if wallet < amount:
+        mk = types.InlineKeyboardMarkup(row_width=2)
+        mk.add(types.InlineKeyboardButton("➕ Add Money", callback_data="wallet_deposit"),
+               types.InlineKeyboardButton("❌ Cancel",    callback_data="cancel_order"))
+        send_msg(cid,
+            f"❌ *Insufficient Wallet Balance!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Order Amount: *{fmt_price(amount)}*\n"
+            f"👛 Your Balance: *{fmt_price(wallet)}*\n"
+            f"📉 Shortfall: *{fmt_price(amount - wallet)}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"➕ Add money to your wallet to continue.",
+            reply_markup=mk); return
     _place_order(cid, "wallet", amount, None)
 
 # ── Pay with KimiPay ──────────────────────────────────────────────────────────
@@ -520,7 +548,9 @@ def cb_pay_kimipay(c):
     cid = str(c.message.chat.id)
     temp = get_temp(cid)
     is_cart = temp.get("is_cart",False)
-    amount = int(temp.get("cart_total",0) if is_cart else temp.get("product",{}).get("price",0))
+    amount = int(float(temp.get("amount") or
+                       (temp.get("cart_total",0) if is_cart
+                        else temp.get("product",{}).get("price",0)) or 0))
     order_sn = gen_order_id()
     u = get_user(cid)
     # Create KimiPay order
