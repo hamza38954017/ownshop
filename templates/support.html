@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Customer Support{% endblock %}
+{% block page_title %}🎧 Customer Support{% endblock %}
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+  <div>
+    <h2 style="font-size:1.1rem;font-weight:700">{{ chats|length }} Conversation(s)</h2>
+    <p style="color:var(--muted);font-size:.78rem">Click a user to open the chat</p>
+  </div>
+</div>
+
+{% if chats %}
+<div style="display:flex;flex-direction:column;gap:0;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+  {% for ch in chats %}
+  <a href="{{ url_for('support_chat', cid=ch.chat_id) }}"
+     style="display:flex;align-items:center;gap:14px;padding:14px 18px;
+            border-bottom:1px solid var(--border);text-decoration:none;color:inherit;
+            transition:.15s;{% if ch.unread %}background:rgba(108,99,255,.06){% endif %}"
+     onmouseover="this.style.background='rgba(255,255,255,.03)'"
+     onmouseout="this.style.background='{% if ch.unread %}rgba(108,99,255,.06){% else %}transparent{% endif %}'">
+
+    <!-- Avatar -->
+    <div style="width:44px;height:44px;border-radius:50%;flex-shrink:0;
+                background:linear-gradient(135deg,var(--accent),var(--accent3));
+                display:flex;align-items:center;justify-content:center;
+                font-weight:700;font-size:1rem;color:#fff;position:relative">
+      {{ (ch.user_name or '?')[0].upper() }}
+      {% if ch.unread %}
+        <span style="position:absolute;top:-2px;right:-2px;background:var(--accent2);
+                     color:#fff;border-radius:99px;font-size:.6rem;padding:1px 5px;
+                     font-weight:700;min-width:16px;text-align:center">{{ ch.unread }}</span>
+      {% endif %}
+    </div>
+
+    <!-- Info -->
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span style="font-weight:{% if ch.unread %}700{% else %}500{% endif %};font-size:.9rem;
+                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          {{ ch.user_name or ch.chat_id }}
+          {% if ch.username %}<span style="color:var(--muted);font-weight:400;font-size:.78rem"> @{{ ch.username }}</span>{% endif %}
+        </span>
+        <span style="font-size:.7rem;color:var(--muted);flex-shrink:0">
+          {{ _format_time(ch.last_time) if _format_time is defined else (ch.last_time or '')[:16] }}
+        </span>
+      </div>
+      <div style="font-size:.8rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+                  white-space:nowrap;margin-top:2px;
+                  {% if ch.unread %}color:var(--text);{% endif %}">
+        {{ ch.last_message or 'No messages yet' }}
+      </div>
+    </div>
+
+    <i class="fa-solid fa-chevron-right" style="color:var(--muted);font-size:.75rem;flex-shrink:0"></i>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <i class="fa-solid fa-headset"></i>
+  <p>No support conversations yet</p>
+  <p style="font-size:.8rem;margin-top:6px">Users will appear here when they message the support bot</p>
+</div>
+{% endif %}
+
+<script>
+// Poll for unread count every 15s
+async function pollUnread(){
+  try{
+    const r=await fetch('/support/unread_count');
+    const d=await r.json();
+    const badge=document.getElementById('supportBadge');
+    if(badge){
+      if(d.count>0){badge.textContent=d.count;badge.style.display='inline';}
+      else badge.style.display='none';
+    }
+  }catch(e){}
+}
+setInterval(pollUnread,15000);
+</script>
+{% endblock %}
