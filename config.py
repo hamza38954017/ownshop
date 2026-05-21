@@ -17,13 +17,17 @@ def cfg(key, default=""):
     return get_config().get(key, default)
 
 # Shortcuts used across bot / app
-def BOT_TOKEN():      return cfg("bot_token")
+def BOT_TOKEN():      return os.environ.get("BOT_TOKEN","").strip() or cfg("bot_token")
 def BOT_USERNAME():   return cfg("bot_username", "YourBotUsername")
 def SUPPORT_USERNAME():return cfg("support_username", "@support")
 def PAYMENT_LINK():   return cfg("payment_link", "")
 def RULES_TEXT():     return cfg("rules_text", "📋 Rules coming soon.")
-def ADMIN_USERNAME(): return cfg("admin_username", "hamza")
-def ADMIN_PASSWORD(): return cfg("admin_password", "hamza")
+def ADMIN_USERNAME():
+    v = cfg("admin_username","").strip()
+    return v if v else os.environ.get("ADMIN_USERNAME","admin")
+def ADMIN_PASSWORD():
+    v = cfg("admin_password","").strip()
+    return v if v else os.environ.get("ADMIN_PASSWORD","admin123")
 def PANEL_NAME():     return cfg("panel_name", "HamzaShop Admin")
 def PANEL_COPYRIGHT():return cfg("panel_copyright", "© 2026 HamzaShop")
 def MIN_DEPOSIT():    return int(cfg("min_deposit", 1000))
