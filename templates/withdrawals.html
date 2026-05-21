@@ -1,72 +1,50 @@
 {% extends "base.html" %}
 {% block title %}Withdrawals{% endblock %}
-{% block page_title %}💸 Withdrawals{% endblock %}
+{% block page_title %}🏦 Withdrawals{% endblock %}
 {% block content %}
-<div class="page-header"><h2>All Withdrawals ({{ withdrawals|length }})</h2></div>
 <div class="table-card">
+  <div class="table-header">
+    <h3>{{ withdrawals|length }} Withdrawal Requests</h3>
+  </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>User</th><th>Amount</th><th>Account/UPI</th><th>Status</th><th>Note</th><th>Date</th><th>Actions</th></tr></thead>
+      <thead><tr><th>ID</th><th>User</th><th>Amount</th><th>Account</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
       <tbody>
       {% for w in withdrawals %}
-      <tr>
-        <td><code style="font-size:.75rem">{{ w.chat_id }}</code></td>
-        <td style="font-weight:700;color:var(--yellow)">₹{{ w.amount or 0 }}</td>
-        <td style="font-size:.82rem">{{ w.account or '—' }}</td>
-        <td>
-          <span class="status-badge {{ w.status or 'pending' }}">
-            {{ '✅' if w.status=='success' else '❌' if w.status=='failed' else '⏳' }}
-            {{ (w.status or 'pending')|title }}
-          </span>
-        </td>
-        <td style="font-size:.78rem;color:var(--muted);max-width:120px">{{ w.note or '—' }}</td>
-        <td style="font-size:.75rem;color:var(--muted)">{{ (w.created_at or '')[:16].replace('T',' ') }}</td>
-        <td>
-          {% if w.status == 'pending' %}
-          <form method="POST" action="{{ url_for('update_withdrawal', wid=w._id) }}" style="display:inline">
-            <input type="hidden" name="status" value="success"/>
-            <input type="hidden" name="note" value="Approved by admin"/>
-            <button class="btn btn-sm btn-success" title="Approve"><i class="fa-solid fa-check"></i></button>
-          </form>
-          <button class="btn btn-sm btn-danger" onclick="rejectWd('{{ w._id }}')" title="Reject">
-            <i class="fa-solid fa-xmark"></i>
-          </button>
-          {% else %}
-          <span style="color:var(--muted);font-size:.78rem">Done</span>
-          {% endif %}
-        </td>
-      </tr>
+        <tr>
+          <td><code style="font-size:.72rem">{{ w._id[:10] }}</code></td>
+          <td>
+            <div>{{ w.user_name or '—' }}</div>
+            <div style="font-size:.72rem;color:var(--muted)">{{ w.chat_id or '' }}</div>
+          </td>
+          <td><b style="color:var(--accent2)">₹{{ "%.0f"|format((w.amount or 0)|float) }}</b></td>
+          <td style="font-size:.8rem;font-family:monospace">{{ w.account or '—' }}</td>
+          <td>
+            {% set st = w.status or 'pending' %}
+            <span class="badge {{ 'success' if st=='success' else 'pending' if st=='pending' else 'failed' }}">{{ st }}</span>
+          </td>
+          <td style="color:var(--muted);font-size:.74rem">{{ (w.created_at or '')[:16] }}</td>
+          <td style="white-space:nowrap">
+            {% if w.status == 'pending' %}
+              <form method="POST" action="/withdrawals/{{ w._id }}/approve" style="display:inline">
+                <button class="btn btn-success btn-sm"><i class="fa-solid fa-check"></i> Approve</button>
+              </form>
+              <form method="POST" action="/withdrawals/{{ w._id }}/reject" style="display:inline"
+                    onsubmit="return confirm('Reject and refund?')">
+                <button class="btn btn-danger btn-sm"><i class="fa-solid fa-rotate-left"></i> Refund</button>
+              </form>
+            {% endif %}
+            <form method="POST" action="/withdrawals/{{ w._id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete record?')">
+              <button class="btn btn-ghost btn-sm"><i class="fa-solid fa-trash"></i></button>
+            </form>
+          </td>
+        </tr>
       {% else %}
-      <tr><td colspan="7"><div class="empty-state"><i class="fa-solid fa-wallet"></i><p>No withdrawals yet</p></div></td></tr>
+        <tr><td colspan="7"><div class="empty-state"><i class="fa-solid fa-wallet"></i>No withdrawals yet</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
-
-<!-- Reject modal -->
-<div class="modal-overlay" id="rejectModal">
-  <div class="modal">
-    <button class="modal-close" onclick="document.getElementById('rejectModal').classList.remove('open')"><i class="fa-solid fa-xmark"></i></button>
-    <h3 style="margin-bottom:18px">❌ Reject Withdrawal</h3>
-    <form method="POST" id="rejectForm">
-      <input type="hidden" name="status" value="failed"/>
-      <div class="form-group"><label class="form-label">Rejection Reason</label>
-        <textarea name="note" class="form-control" style="min-height:80px" placeholder="Reason for rejection…"></textarea>
-      </div>
-      <div style="display:flex;gap:10px">
-        <button type="submit" class="btn btn-danger"><i class="fa-solid fa-xmark"></i> Reject & Refund</button>
-        <button type="button" class="btn btn-outline" onclick="document.getElementById('rejectModal').classList.remove('open')">Cancel</button>
-      </div>
-    </form>
-  </div>
-</div>
-{% block scripts %}
-<script>
-function rejectWd(id){
-  document.getElementById('rejectForm').action='/withdrawals/'+id+'/update';
-  document.getElementById('rejectModal').classList.add('open');
-}
-</script>
-{% endblock %}
 {% endblock %}
