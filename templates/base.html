@@ -210,6 +210,11 @@ code{background:var(--card2);padding:1px 6px;border-radius:4px;font-size:.78rem;
       <i class="fa-solid fa-share-nodes"></i> Referrals</a>
 
     <div class="nav-label" style="margin-top:10px">Tools</div>
+    <a href="{{ url_for('support') }}" class="nav-link {% if request.endpoint in ('support','support_chat') %}active{% endif %}"
+       style="position:relative">
+      <i class="fa-solid fa-headset"></i> Support
+      <span id="supportBadge" class="badge-nav" style="display:none">0</span>
+    </a>
     <a href="{{ url_for('broadcast') }}" class="nav-link {% if request.endpoint=='broadcast' %}active{% endif %}">
       <i class="fa-solid fa-bullhorn"></i> Broadcast</a>
     <a href="{{ url_for('settings') }}" class="nav-link {% if request.endpoint=='settings' %}active{% endif %}">
