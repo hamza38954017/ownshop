@@ -57,8 +57,13 @@ def get_list(path:str)->list:
     return [{"_id":k,**v} if isinstance(v,dict) else {"_id":k,"value":v} for k,v in data.items()]
 
 def get_setting(key:str, default=None):
-    val = get(f"config/{key}")
-    return val if val is not None else default
+    try:
+        val = get(f"config/{key}")
+        if val is None or val == "" or val == 0 and default is not None:
+            return default
+        return val
+    except:
+        return default
 
 def set_setting(key:str, value):
     return put(f"config/{key}", value)
