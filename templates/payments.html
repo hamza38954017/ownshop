@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Payments{% endblock %}
+{% block page_title %}💳 Payments{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h2>Payment Sessions</h2>
+  <a href="{{ url_for('create_payment') }}" class="btn btn-primary">
+    <i class="fa-solid fa-plus"></i> Create Custom Payment
+  </a>
+</div>
+<div class="table-card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Order SN</th><th>Type</th><th>Description</th><th>Amount</th><th>KimiPay ID</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for p in payments %}
+        <tr>
+          <td><code style="font-size:.72rem">{{ p._id[:14] }}</code></td>
+          <td><span class="chip">{{ p.get('type','purchase') }}</span></td>
+          <td style="font-size:.8rem;color:var(--muted)">{{ p.get('description','—')[:30] }}</td>
+          <td><b>₹{{ "%.0f"|format((p.amount or 0)|float) }}</b></td>
+          <td style="font-size:.72rem;font-family:monospace;color:var(--muted)">{{ p.get('kimipay_order_id','—')[:18] }}</td>
+          <td>
+            {% set st = p.status or 'pending' %}
+            <span class="badge {{ 'success' if st in ('completed','success','paid') else 'pending' if st=='pending' else 'failed' }}">{{ st }}</span>
+          </td>
+          <td style="color:var(--muted);font-size:.74rem">{{ (p.created_at or '')[:16] }}</td>
+          <td style="white-space:nowrap">
+            {% if p.get('payment_url') %}
+              <a href="{{ p.payment_url }}" target="_blank" class="btn btn-outline btn-sm" title="Open payment link">
+                <i class="fa-solid fa-link"></i>
+              </a>
+              <button class="btn btn-ghost btn-sm" onclick="copyText('{{ p.payment_url }}')" title="Copy link">
+                <i class="fa-solid fa-copy"></i>
+              </button>
+            {% endif %}
+            <button class="btn btn-outline btn-sm" onclick="checkStatus('{{ p._id }}','pst_{{ loop.index }}')" title="Check status">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
+            <span id="pst_{{ loop.index }}" style="font-size:.72rem;color:var(--muted)"></span>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8"><div class="empty-state"><i class="fa-solid fa-credit-card"></i>No payment sessions</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function checkStatus(sid, spanId) {
+  const span = document.getElementById(spanId);
+  span.textContent = '⏳...';
+  try {
+    const r = await fetch(`/payments/${sid}/check`, {method:'POST'});
+    const d = await r.json();
+    span.textContent = d.status || d.error || '?';
+    span.style.color = ['success','paid','completed'].includes(d.status) ? 'var(--green)' : 'var(--yellow)';
+  } catch(e) { span.textContent = 'Err'; }
+}
+function copyText(t) {
+  navigator.clipboard.writeText(t).then(()=>{
+    const el = document.createElement('div');
+    el.style.cssText='position:fixed;bottom:20px;right:20px;background:var(--green);color:#fff;padding:8px 16px;border-radius:8px;font-size:.82rem;z-index:9999';
+    el.textContent='✅ Copied!'; document.body.appendChild(el);
+    setTimeout(()=>el.remove(),2000);
+  });
+}
+</script>
+{% endblock %}
