@@ -2,44 +2,64 @@
 {% block title %}Deposits{% endblock %}
 {% block page_title %}💵 Deposits{% endblock %}
 {% block content %}
-<div class="page-header"><h2>All Deposits ({{ deposits|length }})</h2></div>
 <div class="table-card">
+  <div class="table-header">
+    <h3>{{ deposits|length }} Deposit Sessions</h3>
+  </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>User</th><th>Amount</th><th>UTR</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Order SN</th><th>User</th><th>Amount</th><th>KimiPay ID</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
       <tbody>
       {% for d in deposits %}
-      <tr>
-        <td><code style="font-size:.75rem">{{ d.chat_id }}</code></td>
-        <td style="font-weight:700;color:var(--green)">₹{{ d.amount or 0 }}</td>
-        <td><code style="font-size:.78rem">{{ d.utr or '—' }}</code></td>
-        <td>
-          <span class="status-badge {{ d.status or 'pending' }}">
-            {{ '✅' if d.status=='success' else '❌' if d.status=='failed' else '⏳' }}
-            {{ (d.status or 'pending')|title }}
-          </span>
-        </td>
-        <td style="font-size:.75rem;color:var(--muted)">{{ (d.created_at or '')[:16].replace('T',' ') }}</td>
-        <td>
-          {% if d.status == 'pending' %}
-          <form method="POST" action="{{ url_for('approve_deposit', tid=d._id) }}" style="display:inline">
-            <button class="btn btn-sm btn-success"><i class="fa-solid fa-check"></i> Approve</button>
-          </form>
-          <form method="POST" action="{{ url_for('reject_deposit', tid=d._id) }}" style="display:inline"
-                onsubmit="return confirm('Reject this deposit?')">
-            <input type="hidden" name="note" value="Rejected by admin"/>
-            <button class="btn btn-sm btn-danger"><i class="fa-solid fa-xmark"></i></button>
-          </form>
-          {% else %}
-          <span style="color:var(--muted);font-size:.78rem">{{ d.status|title }}</span>
-          {% endif %}
-        </td>
-      </tr>
+        <tr>
+          <td><code style="font-size:.72rem">{{ d._id }}</code></td>
+          <td>{{ d.user_name or d.get('chat_id','—') }}</td>
+          <td><b style="color:var(--green)">₹{{ "%.0f"|format((d.amount or 0)|float) }}</b></td>
+          <td style="color:var(--muted);font-size:.76rem">{{ d.get('kimipay_order_id','—')[:20] }}</td>
+          <td>
+            {% set st = d.status or 'pending' %}
+            <span class="badge {{ 'success' if st=='completed' else 'pending' if st=='pending' else 'failed' }}">
+              {{ st }}
+            </span>
+          </td>
+          <td style="color:var(--muted);font-size:.74rem">{{ (d.created_at or '')[:16] }}</td>
+          <td style="white-space:nowrap">
+            {% if d.status == 'pending' %}
+              <form method="POST" action="/deposits/{{ d._id }}/approve" style="display:inline">
+                <button class="btn btn-success btn-sm"><i class="fa-solid fa-check"></i> Approve</button>
+              </form>
+              <form method="POST" action="/deposits/{{ d._id }}/reject" style="display:inline"
+                    onsubmit="return confirm('Reject deposit?')">
+                <button class="btn btn-danger btn-sm"><i class="fa-solid fa-xmark"></i> Reject</button>
+              </form>
+            {% else %}
+              <span style="color:var(--muted);font-size:.75rem">{{ st }}</span>
+            {% endif %}
+            <button class="btn btn-outline btn-sm" onclick="checkStatus('{{ d._id }}','deposit_{{ d._id }}')" title="Check KimiPay status">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
+            <span id="deposit_{{ d._id }}" style="font-size:.72rem;color:var(--muted)"></span>
+          </td>
+        </tr>
       {% else %}
-      <tr><td colspan="6"><div class="empty-state"><i class="fa-solid fa-money-bill-wave"></i><p>No deposit requests yet</p></div></td></tr>
+        <tr><td colspan="7"><div class="empty-state"><i class="fa-solid fa-money-bill-wave"></i>No deposits yet</div></td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function checkStatus(sid, spanId) {
+  const span = document.getElementById(spanId);
+  span.textContent = '⏳ Checking...';
+  try {
+    const r = await fetch(`/payments/${sid}/check`, {method:'POST'});
+    const d = await r.json();
+    span.textContent = '→ ' + (d.status || d.error || '?');
+    span.style.color = d.status === 'success' ? 'var(--green)' : 'var(--yellow)';
+  } catch(e) { span.textContent = 'Error'; }
+}
+</script>
 {% endblock %}
