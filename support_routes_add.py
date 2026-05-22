@@ -90,35 +90,19 @@ def support_delete(cid, mid):
 # ── clear all messages ────────────────────────────────────────────────────────
 @support_bp.route("/<cid>/clear", methods=["POST"], endpoint="support_clear")
 def support_clear(cid):
-    scope = request.args.get("scope", "me")  # "me" or "everyone"
-    if scope == "everyone":
-        # Try to delete admin-sent messages from Telegram
-        msgs_raw = fb.get(f"support/{cid}/messages") or {}
-        for mid, m in msgs_raw.items():
-            if m.get("from") == "admin":
-                try:
-                    import support_bot as sb_mod
-                    sb_mod.admin_delete_message(cid, mid)
-                except Exception as e:
-                    print(f"[clear_everyone] {mid}: {e}")
-    # Always delete from Firebase
     fb.delete(f"support/{cid}/messages")
-    fb.patch(f"support/{cid}/meta", {"last_message": "(cleared)", "unread": 0})
+    fb.patch(f"support/{cid}/meta", {"last_message": "", "unread": 0})
     return redirect(url_for("support_bp.support_chat", cid=cid))
 
-# ── unread badge count + total message count ────────────────────────────────
+# ── unread badge count ────────────────────────────────────────────────────────
 @support_bp.route("/unread_count")
 def support_unread_count():
-    raw         = fb.get("support") or {}
-    unread      = 0
-    total_msgs  = 0
-    for data in raw.values():
-        if not isinstance(data, dict): continue
-        meta = data.get("meta", {}) or {}
-        unread     += int(meta.get("unread") or 0)
-        msgs        = data.get("messages", {}) or {}
-        total_msgs += len(msgs)
-    return jsonify({"count": unread, "total_messages": total_msgs})
+    raw   = fb.get("support") or {}
+    total = sum(
+        (data.get("meta", {}).get("unread") or 0)
+        for data in raw.values()
+    )
+    return jsonify({"count": total})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
