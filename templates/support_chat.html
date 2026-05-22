@@ -478,42 +478,50 @@ async function sendMsg(){
   const status = document.getElementById('sendStatus');
 
   if(!text && !selectedFile){ return; }
+
+  // Block check — refuse silently
+  if(document.querySelector('.blocked-banner')){
+    status.textContent = '🚫 User is blocked — unblock first.'; return;
+  }
+
   status.textContent = '⏳ Sending…';
 
   const fd = new FormData();
   fd.append('text', text);
 
-  let endpoint = `/support/${CID}/send`;
-
   if(selectedFile){
-    endpoint = `/support/${CID}/send_file`;
     fd.append('file', selectedFile, selectedFile.name);
-    // Simulate XHR with progress
     try {
-      const result = await uploadWithProgress(endpoint, fd, pct => setProgress(pct));
+      const result = await uploadWithProgress(
+        `/support/${CID}/send_file`, fd, pct => setProgress(pct)
+      );
+      setProgress(null);
       if(result.ok){
         status.textContent = '✅ Sent';
         clearFile();
         document.getElementById('msgInput').value = '';
-        setProgress(null);
         location.reload();
       } else {
-        status.textContent = '❌ ' + (result.error || 'Failed');
-        setProgress(null);
+        status.textContent = '❌ ' + (result.error || 'Upload failed');
       }
     } catch(e){
-      status.textContent = '❌ Error: ' + e;
       setProgress(null);
+      status.textContent = '❌ Upload error: ' + e;
     }
     return;
   }
 
   // Plain text send
   try {
-    const r = await fetch(endpoint, {method:'POST', body: fd});
+    const r = await fetch(`/support/${CID}/send`, {method:'POST', body: fd});
+    if(!r.ok){
+      status.textContent = `❌ Server error ${r.status} — check Flask routes`;
+      return;
+    }
     const d = await r.json();
     if(d.ok){
       status.textContent = '✅ Sent';
+      document.getElementById('msgInput').value = '';
       location.reload();
     } else {
       status.textContent = '❌ ' + (d.error || 'Failed');
@@ -582,10 +590,16 @@ async function deleteMsg(mid){
 // ── Block / Unblock ───────────────────────────────────────────────────────────
 async function setBlock(blocked){
   const endpoint = `/support/${CID}/${blocked ? 'block' : 'unblock'}`;
-  const r = await fetch(endpoint, {method:'POST'});
-  const d = await r.json();
-  if(d.ok) location.reload();
-  else alert('Error: ' + (d.error || 'Failed'));
+  try {
+    const r = await fetch(endpoint, {method:'POST'});
+    if(!r.ok){
+      alert(`❌ Route ${endpoint} not found (${r.status}).\nMake sure support_routes_add.py is registered in your Flask app.`);
+      return;
+    }
+    const d = await r.json();
+    if(d.ok) location.reload();
+    else alert('Error: ' + (d.error || 'Failed'));
+  } catch(e){ alert('Network error: ' + e); }
 }
 
 // ── Bubble hover actions (mouse + touch) ─────────────────────────────────────
