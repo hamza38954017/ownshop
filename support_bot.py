@@ -5,7 +5,7 @@ Messages stored in Firebase /support/{chat_id}/messages/{msg_id}
 """
 import telebot
 from telebot import types
-import datetime, os, time
+import datetime, os, time, io
 import firebase_helper as fb
 
 def _get_support_token():
@@ -31,9 +31,8 @@ def send_msg(cid, text, **kw):
 
 def store_message(chat_id, msg_id, data: dict):
     fb.put(f"support/{chat_id}/messages/{msg_id}", data)
-    # Update conversation meta
     fb.patch(f"support/{chat_id}/meta", {
-        "last_message":   data.get("text") or data.get("caption") or "[image]",
+        "last_message":   data.get("text") or data.get("caption") or "[media]",
         "last_time":      data.get("time", now_str()),
         "last_ts":        now_ts(),
         "unread":         (fb.get(f"support/{chat_id}/meta/unread") or 0) + 1,
@@ -42,29 +41,66 @@ def store_message(chat_id, msg_id, data: dict):
         "username":       data.get("username",""),
     })
 
-def mark_delivered(chat_id, msg_id):
-    fb.patch(f"support/{chat_id}/messages/{msg_id}", {"delivered": True})
+def get_user_photo_url(user_id):
+    """Fetch the user's Telegram profile photo and return a public URL."""
+    try:
+        photos = support_bot.get_user_profile_photos(user_id, limit=1)
+        if photos and photos.photos:
+            file_id   = photos.photos[0][-1].file_id
+            file_info = support_bot.get_file(file_id)
+            token     = _get_support_token()
+            return f"https://api.telegram.org/file/bot{token}/{file_info.file_path}"
+    except Exception as e:
+        print(f"[PHOTO] {e}")
+    return ""
+
+def _get_file_url(file_id):
+    try:
+        file_info = support_bot.get_file(file_id)
+        token     = _get_support_token()
+        return f"https://api.telegram.org/file/bot{token}/{file_info.file_path}"
+    except:
+        return ""
+
+def _is_blocked(cid):
+    return bool(fb.get(f"support/{cid}/meta/blocked"))
+
+BLOCKED_MSG = "🚫 You have been blocked from contacting support."
 
 # ── /start ────────────────────────────────────────────────────────────────────
 @support_bot.message_handler(commands=["start"])
 def cmd_start(msg):
-    cid = str(msg.chat.id)
-    fn  = msg.from_user.first_name or "Friend"
-    un  = msg.from_user.username or ""
-    # Init meta if new
+    cid  = str(msg.chat.id)
+    fn   = msg.from_user.first_name or "Friend"
+    un   = msg.from_user.username or ""
+    bio  = getattr(msg.from_user, 'bio', None) or ""
+    uname = f"{fn} {msg.from_user.last_name or ''}".strip()
+
+    if _is_blocked(cid):
+        send_msg(cid, BLOCKED_MSG); return
+
+    photo_url = get_user_photo_url(msg.from_user.id)
+
     meta = fb.get(f"support/{cid}/meta") or {}
-    if not meta:
-        fb.put(f"support/{cid}/meta", {
-            "chat_id": cid, "user_name": fn,
-            "username": un, "started_at": now_str(),
-            "last_message": "", "last_time": now_str(),
-            "last_ts": now_ts(), "unread": 0,
-        })
+    fb.patch(f"support/{cid}/meta", {
+        "chat_id":    cid,
+        "user_name":  uname,
+        "username":   un,
+        "photo_url":  photo_url,
+        "bio":        bio,
+        "started_at": meta.get("started_at", now_str()),
+        "last_message": meta.get("last_message",""),
+        "last_time":  now_str(),
+        "last_ts":    now_ts(),
+        "unread":     meta.get("unread", 0),
+        "blocked":    False,
+    })
+
     greeting = fb.get("config/support_greeting") or (
         "👋 *Welcome to Customer Support!*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "Please describe your issue and we'll get back to you shortly.\n\n"
-        "📸 You can also send screenshots or images.\n"
+        "📸 You can also send screenshots, videos or files.\n"
         "⏱️ Response time: Usually within a few hours."
     )
     support_bot.send_message(cid, greeting, parse_mode="Markdown")
@@ -72,31 +108,31 @@ def cmd_start(msg):
 # ── User sends text ───────────────────────────────────────────────────────────
 @support_bot.message_handler(content_types=["text"])
 def handle_text(msg):
-    cid    = str(msg.chat.id)
-    mid    = str(msg.message_id)
-    fn     = msg.from_user.first_name or ""
-    un     = msg.from_user.username or ""
-    uname  = f"{fn} {msg.from_user.last_name or ''}".strip()
+    cid   = str(msg.chat.id)
+    mid   = str(msg.message_id)
+    fn    = msg.from_user.first_name or ""
+    un    = msg.from_user.username or ""
+    uname = f"{fn} {msg.from_user.last_name or ''}".strip()
 
-    # Update meta name
-    fb.patch(f"support/{cid}/meta", {"user_name": uname, "username": un, "chat_id": cid})
+    if _is_blocked(cid):
+        send_msg(cid, BLOCKED_MSG); return
 
-    store_message(cid, mid, {
-        "msg_id":    mid,
-        "chat_id":   cid,
-        "user_name": uname,
-        "username":  un,
-        "text":      msg.text,
-        "type":      "text",
-        "from":      "user",
-        "time":      now_str(),
-        "ts":        now_ts(),
-        "read":      False,
-        "delivered": True,
-        "edited":    False,
+    # Refresh profile photo silently
+    photo_url = fb.get(f"support/{cid}/meta/photo_url") or get_user_photo_url(msg.from_user.id)
+    fb.patch(f"support/{cid}/meta", {
+        "user_name": uname, "username": un,
+        "chat_id": cid, "photo_url": photo_url,
     })
 
-    # Auto-ack
+    store_message(cid, mid, {
+        "msg_id":    mid, "chat_id": cid,
+        "user_name": uname, "username": un,
+        "text":      msg.text, "type": "text",
+        "from":      "user", "time": now_str(),
+        "ts":        now_ts(), "read": False,
+        "delivered": True, "edited": False,
+    })
+
     try:
         support_bot.send_chat_action(cid, "typing")
         auto_reply = fb.get("config/support_auto_reply") or ""
@@ -108,51 +144,107 @@ def handle_text(msg):
 # ── User sends photo ──────────────────────────────────────────────────────────
 @support_bot.message_handler(content_types=["photo"])
 def handle_photo(msg):
-    cid  = str(msg.chat.id)
-    mid  = str(msg.message_id)
-    fn   = msg.from_user.first_name or ""
-    un   = msg.from_user.username or ""
+    cid   = str(msg.chat.id)
+    mid   = str(msg.message_id)
+    fn    = msg.from_user.first_name or ""
+    un    = msg.from_user.username or ""
     uname = f"{fn} {msg.from_user.last_name or ''}".strip()
 
-    # Get highest resolution file_id
+    if _is_blocked(cid):
+        send_msg(cid, BLOCKED_MSG); return
+
     photo    = msg.photo[-1]
     file_id  = photo.file_id
     caption  = msg.caption or ""
+    file_url = _get_file_url(file_id)
 
-    # Get public URL via getFile
-    try:
-        file_info = support_bot.get_file(file_id)
-        token     = _get_support_token()
-        file_url  = f"https://api.telegram.org/file/bot{token}/{file_info.file_path}"
-    except:
-        file_url = ""
-
-    fb.patch(f"support/{cid}/meta", {"user_name": uname, "username": un, "chat_id": cid})
-
-    store_message(cid, mid, {
-        "msg_id":    mid,
-        "chat_id":   cid,
-        "user_name": uname,
-        "username":  un,
-        "text":      caption,
-        "caption":   caption,
-        "file_id":   file_id,
-        "file_url":  file_url,
-        "type":      "photo",
-        "from":      "user",
-        "time":      now_str(),
-        "ts":        now_ts(),
-        "read":      False,
-        "delivered": True,
-        "edited":    False,
+    photo_url = fb.get(f"support/{cid}/meta/photo_url") or get_user_photo_url(msg.from_user.id)
+    fb.patch(f"support/{cid}/meta", {
+        "user_name": uname, "username": un,
+        "chat_id": cid, "photo_url": photo_url,
     })
 
-# ── Admin reply forwarded from panel ─────────────────────────────────────────
+    store_message(cid, mid, {
+        "msg_id":    mid, "chat_id": cid,
+        "user_name": uname, "username": un,
+        "text":      caption, "caption": caption,
+        "file_id":   file_id, "file_url": file_url,
+        "type":      "photo", "from": "user",
+        "time":      now_str(), "ts": now_ts(),
+        "read":      False, "delivered": True, "edited": False,
+    })
+
+# ── User sends video ──────────────────────────────────────────────────────────
+@support_bot.message_handler(content_types=["video"])
+def handle_video(msg):
+    cid   = str(msg.chat.id)
+    mid   = str(msg.message_id)
+    fn    = msg.from_user.first_name or ""
+    un    = msg.from_user.username or ""
+    uname = f"{fn} {msg.from_user.last_name or ''}".strip()
+
+    if _is_blocked(cid):
+        send_msg(cid, BLOCKED_MSG); return
+
+    file_id  = msg.video.file_id
+    caption  = msg.caption or ""
+    file_url = _get_file_url(file_id)
+
+    photo_url = fb.get(f"support/{cid}/meta/photo_url") or get_user_photo_url(msg.from_user.id)
+    fb.patch(f"support/{cid}/meta", {
+        "user_name": uname, "username": un,
+        "chat_id": cid, "photo_url": photo_url,
+    })
+
+    store_message(cid, mid, {
+        "msg_id":    mid, "chat_id": cid,
+        "user_name": uname, "username": un,
+        "text":      caption, "caption": caption,
+        "file_id":   file_id, "file_url": file_url,
+        "type":      "video", "from": "user",
+        "time":      now_str(), "ts": now_ts(),
+        "read":      False, "delivered": True, "edited": False,
+    })
+
+# ── User sends document ───────────────────────────────────────────────────────
+@support_bot.message_handler(content_types=["document"])
+def handle_document(msg):
+    cid   = str(msg.chat.id)
+    mid   = str(msg.message_id)
+    fn    = msg.from_user.first_name or ""
+    un    = msg.from_user.username or ""
+    uname = f"{fn} {msg.from_user.last_name or ''}".strip()
+
+    if _is_blocked(cid):
+        send_msg(cid, BLOCKED_MSG); return
+
+    file_id   = msg.document.file_id
+    file_name = msg.document.file_name or "file"
+    caption   = msg.caption or ""
+    file_url  = _get_file_url(file_id)
+
+    photo_url = fb.get(f"support/{cid}/meta/photo_url") or get_user_photo_url(msg.from_user.id)
+    fb.patch(f"support/{cid}/meta", {
+        "user_name": uname, "username": un,
+        "chat_id": cid, "photo_url": photo_url,
+    })
+
+    store_message(cid, mid, {
+        "msg_id":    mid, "chat_id": cid,
+        "user_name": uname, "username": un,
+        "text":      caption, "caption": caption,
+        "file_id":   file_id, "file_url": file_url,
+        "file_name": file_name,
+        "type":      "document", "from": "user",
+        "time":      now_str(), "ts": now_ts(),
+        "read":      False, "delivered": True, "edited": False,
+    })
+
+# ── Admin: send text / image_url ──────────────────────────────────────────────
 def admin_reply(chat_id: str, text: str, image_url: str = "") -> dict:
     """Called by Flask /support/<cid>/send route."""
     if not support_bot:
         return {"error": "Support bot not running"}
-    mid = None
     try:
         if image_url and text:
             m = support_bot.send_photo(chat_id, image_url, caption=text, parse_mode="Markdown")
@@ -162,34 +254,94 @@ def admin_reply(chat_id: str, text: str, image_url: str = "") -> dict:
             m = support_bot.send_message(chat_id, text, parse_mode="Markdown")
         mid = str(m.message_id)
 
-        # Store admin message in Firebase
         fb.put(f"support/{chat_id}/messages/admin_{mid}", {
-            "msg_id":   f"admin_{mid}",
-            "chat_id":  chat_id,
-            "text":     text,
-            "image_url":image_url,
-            "type":     "photo" if image_url else "text",
-            "from":     "admin",
-            "time":     now_str(),
-            "ts":       now_ts(),
-            "read":     False,
-            "delivered":True,
-            "edited":   False,
+            "msg_id":    f"admin_{mid}",
+            "chat_id":   chat_id,
+            "text":      text,
+            "image_url": image_url,
+            "type":      "photo" if image_url else "text",
+            "from":      "admin",
+            "time":      now_str(),
+            "ts":        now_ts(),
+            "read":      False,
+            "delivered": True,
+            "edited":    False,
         })
-        # Update meta
         fb.patch(f"support/{chat_id}/meta", {
             "last_message": text or "[image]",
             "last_time":    now_str(),
             "last_ts":      now_ts(),
+            "unread":       0,
         })
-        # Reset unread on admin reply
-        fb.patch(f"support/{chat_id}/meta", {"unread": 0})
         return {"ok": True, "mid": mid}
     except Exception as e:
         return {"error": str(e)}
 
+# ── Admin: send uploaded file ─────────────────────────────────────────────────
+def admin_send_file(chat_id: str, file_bytes: bytes, filename: str,
+                    mime_type: str, caption: str = "") -> dict:
+    """Upload a file from the admin panel → Telegram → store Telegram CDN URL."""
+    if not support_bot:
+        return {"error": "Support bot not running"}
+    try:
+        f = io.BytesIO(file_bytes)
+        f.name = filename
+        cap = caption or None
+
+        if mime_type.startswith("image/"):
+            m      = support_bot.send_photo(chat_id, f, caption=cap, parse_mode="Markdown")
+            fid    = m.photo[-1].file_id
+            ftype  = "photo"
+        elif mime_type.startswith("video/"):
+            m      = support_bot.send_video(chat_id, f, caption=cap, parse_mode="Markdown")
+            fid    = m.video.file_id
+            ftype  = "video"
+        else:
+            m      = support_bot.send_document(chat_id, f, caption=cap, parse_mode="Markdown")
+            fid    = m.document.file_id
+            ftype  = "document"
+
+        file_url = _get_file_url(fid)
+        mid      = str(m.message_id)
+
+        fb.put(f"support/{chat_id}/messages/admin_{mid}", {
+            "msg_id":    f"admin_{mid}",
+            "chat_id":   chat_id,
+            "text":      caption,
+            "file_url":  file_url,
+            "file_name": filename,
+            "type":      ftype,
+            "from":      "admin",
+            "time":      now_str(),
+            "ts":        now_ts(),
+            "read":      False,
+            "delivered": True,
+            "edited":    False,
+        })
+        fb.patch(f"support/{chat_id}/meta", {
+            "last_message": caption or f"[{ftype}]",
+            "last_time":    now_str(),
+            "last_ts":      now_ts(),
+            "unread":       0,
+        })
+        return {"ok": True, "mid": mid, "file_url": file_url, "type": ftype}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ── Admin: block / unblock ────────────────────────────────────────────────────
+def block_user(chat_id: str) -> dict:
+    fb.patch(f"support/{chat_id}/meta", {"blocked": True})
+    try:
+        support_bot.send_message(chat_id, BLOCKED_MSG)
+    except: pass
+    return {"ok": True}
+
+def unblock_user(chat_id: str) -> dict:
+    fb.patch(f"support/{chat_id}/meta", {"blocked": False})
+    return {"ok": True}
+
+# ── Admin: edit / delete ──────────────────────────────────────────────────────
 def admin_edit_message(chat_id: str, admin_mid: str, new_text: str) -> dict:
-    """Edit an admin message already sent to the user."""
     if not support_bot: return {"error":"Bot not running"}
     try:
         real_mid = int(admin_mid.replace("admin_",""))
@@ -201,7 +353,6 @@ def admin_edit_message(chat_id: str, admin_mid: str, new_text: str) -> dict:
         return {"error": str(e)}
 
 def admin_delete_message(chat_id: str, admin_mid: str) -> dict:
-    """Delete an admin message from Telegram and Firebase."""
     if not support_bot: return {"error":"Bot not running"}
     try:
         real_mid = int(admin_mid.replace("admin_",""))
