@@ -26,16 +26,43 @@ def _get_token():
 _BOT_TOKEN = _get_token()
 bot = telebot.TeleBot(_BOT_TOKEN, parse_mode=None) if _BOT_TOKEN else None
 
-# ── State (in-memory per gunicorn worker) ────────────────────────────────────
+# ── State — persisted to Firebase so gunicorn restarts don't lose sessions ────
+# In-memory cache + Firebase persistence
 user_states = {}
 user_temp   = {}
 
-def get_state(cid):   return user_states.get(str(cid))
-def set_state(cid,s): user_states[str(cid)] = s
-def clear_state(cid): user_states.pop(str(cid),None); user_temp.pop(str(cid),None)
-def get_temp(cid):    return user_temp.get(str(cid),{})
-def set_temp(cid,d):  user_temp[str(cid)] = d
-def upd_temp(cid,d):  user_temp.setdefault(str(cid),{}).update(d)
+def get_state(cid):
+    s = user_states.get(str(cid))
+    if s: return s
+    # fallback to Firebase
+    return fb.get(f"sessions/{cid}/state") or None
+
+def set_state(cid, s):
+    user_states[str(cid)] = s
+    fb.put(f"sessions/{cid}/state", s)
+
+def clear_state(cid):
+    user_states.pop(str(cid), None)
+    user_temp.pop(str(cid), None)
+    fb.delete(f"sessions/{cid}")
+
+def get_temp(cid):
+    t = user_temp.get(str(cid))
+    if t: return t
+    # fallback to Firebase
+    t = fb.get(f"sessions/{cid}/temp") or {}
+    if t: user_temp[str(cid)] = t
+    return t
+
+def set_temp(cid, d):
+    user_temp[str(cid)] = d
+    fb.put(f"sessions/{cid}/temp", d)
+
+def upd_temp(cid, d):
+    existing = get_temp(cid)
+    existing.update(d)
+    user_temp[str(cid)] = existing
+    fb.put(f"sessions/{cid}/temp", existing)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def now_str(): return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
