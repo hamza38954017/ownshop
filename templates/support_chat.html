@@ -161,9 +161,10 @@
         <i class="fa-solid fa-ban"></i> Block User
       </button>
     {% endif %}
-    <button class="btn btn-danger btn-sm" onclick="openModal('clearModal')">
-      <i class="fa-solid fa-trash"></i> Clear Chat
-    </button>
+    <form method="POST" action="{{ url_for('support_clear',cid=cid) }}"
+          onsubmit="return confirm('Clear all messages for this user?')">
+      <button class="btn btn-danger btn-sm"><i class="fa-solid fa-trash"></i> Clear Chat</button>
+    </form>
   </div>
 
   <!-- ── Messages ── -->
@@ -382,35 +383,6 @@
           </a>
         {% endif %}
       </div>
-    </div>
-  </div>
-</div>
-<!-- ── Clear Chat Modal ── -->
-<div class="modal-overlay" id="clearModal">
-  <div class="modal" style="max-width:380px">
-    <button class="modal-close" onclick="closeModal('clearModal')"><i class="fa-solid fa-xmark"></i></button>
-    <h3 style="margin-bottom:6px;font-size:1rem">🗑️ Clear Chat</h3>
-    <p style="color:var(--muted);font-size:.82rem;margin-bottom:20px">How do you want to clear this conversation?</p>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <form method="POST" action="{{ url_for('support_bp.support_clear',cid=cid) }}?scope=me">
-        <button type="submit" class="btn btn-outline" style="width:100%;justify-content:flex-start;gap:10px">
-          <i class="fa-solid fa-user" style="color:var(--accent)"></i>
-          <div style="text-align:left">
-            <div style="font-weight:600">Delete for Me</div>
-            <div style="font-size:.73rem;color:var(--muted)">Removes from admin panel only. User keeps their messages.</div>
-          </div>
-        </button>
-      </form>
-      <form method="POST" action="{{ url_for('support_bp.support_clear',cid=cid) }}?scope=everyone">
-        <button type="submit" class="btn btn-danger" style="width:100%;justify-content:flex-start;gap:10px"
-                onclick="return confirm('This will delete messages from Telegram too. Continue?')">
-          <i class="fa-solid fa-users"></i>
-          <div style="text-align:left">
-            <div style="font-weight:600">Delete for Everyone</div>
-            <div style="font-size:.73rem;opacity:.8">Attempts to delete admin messages from Telegram too.</div>
-          </div>
-        </button>
-      </form>
     </div>
   </div>
 </div>
