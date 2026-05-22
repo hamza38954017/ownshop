@@ -420,50 +420,69 @@ def cb_checkout_cart(c):
     _start_cart_fields(cid, dict(cart), total, c.message.message_id, u)
 
 def _start_cart_fields(cid, cart, total, mid, u):
-    """Build a queue of (item_name, field) pairs for all cart items that need fields."""
+    """Build field queue for all cart items, always fetching latest fields from DB."""
     queue = []
     for pid, item in cart.items():
-        fields = item.get("fields",[])
-        if not fields:
-            # Fetch from DB in case cart was added before fields were defined
-            p = fb.get(f"products/{pid}") or {}
-            fields = p.get("fields",[])
-        for f in fields:
-            queue.append({"pid":pid,"item_name":item["name"],"field":f,"answer":""})
-    upd_temp(cid,{"field_queue":queue,"field_index":0,"field_answers":{}})
+        p_db   = fb.get(f"products/{pid}") or {}
+        fields = p_db.get("fields", []) or item.get("fields", [])
+        for fld in fields:
+            queue.append({
+                "pid":       pid,
+                "item_name": item.get("name", "Item"),
+                "field":     fld,
+                "answer":    ""
+            })
+    upd_temp(cid, {"field_queue": queue, "field_index": 0, "field_answers": {}})
     if queue:
         _ask_next_field(cid)
     else:
-        # No fields needed — go to payment
+        clear_state(cid)
         _show_checkout_payment(cid, total, u)
 
 def _ask_next_field(cid):
-    temp = get_temp(cid)
-    queue = temp.get("field_queue",[])
-    idx = temp.get("field_index",0)
+    temp  = get_temp(cid)
+    queue = temp.get("field_queue", [])
+    idx   = temp.get("field_index", 0)
+
     if idx >= len(queue):
-        # All fields collected — use stored amount (set at start of buynow/checkout)
-        amount = temp.get("amount") or                  temp.get("cart_total",0) if temp.get("is_cart")                  else temp.get("amount") or temp.get("product",{}).get("price",0)
-        if not amount:
-            # Last resort re-derive
-            amount = temp.get("cart_total",0) or temp.get("product",{}).get("price",0)
+        # All fields collected — derive amount safely
+        is_cart = temp.get("is_cart", False)
+        if is_cart:
+            amount = float(temp.get("amount") or temp.get("cart_total") or 0)
+        else:
+            amount = float(temp.get("amount") or temp.get("product", {}).get("price") or 0)
         clear_state(cid)
         u = get_user(cid)
-        _show_checkout_payment(cid, float(amount), u)
+        _show_checkout_payment(cid, amount, u)
         return
+
     entry = queue[idx]
-    f = entry["field"]
-    label = f.get("label","Enter value")
-    ftype = f.get("type","text")
-    req_star = " *" if f.get("required") else ""
-    set_state(cid,"wait_field")
-    send_msg(cid,
+    f     = entry["field"]
+    label = f.get("label", "Enter value")
+    ftype = f.get("type", "text")
+    req_star = " \u2731" if f.get("required") else ""
+
+    type_hints = {
+        "email":  "_(valid email address)_",
+        "mobile": "_(mobile number, digits only)_",
+        "uid":    "_(numeric ID, min 6 digits)_",
+        "number": "_(numbers only)_",
+    }
+    hint = type_hints.get(ftype, "")
+
+    # MUST set state before sending so the next message is caught
+    set_state(cid, "wait_field")
+
+    bot.send_message(
+        cid,
         f"📝 *{entry['item_name']}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Field {idx+1}/{len(queue)}\n\n"
-        f"Please enter: *{label}*{req_star}\n"
-        + (f"_(type: {ftype})_" if ftype not in ("text","string") else ""),
-        reply_markup=types.ForceReply(selective=True))
+        f"Step {idx+1} of {len(queue)}\n\n"
+        f"Please enter your *{label}*{req_star}\n"
+        f"{hint}",
+        parse_mode="Markdown",
+        reply_markup=types.ForceReply(selective=True)
+    )
 
 def _show_checkout_payment(cid, amount, u):
     temp = get_temp(cid)
@@ -501,15 +520,18 @@ def cb_buy_now(c):
     if not p: bot.answer_callback_query(c.id,"❌ Not found",show_alert=True); return
     set_temp(cid,{"product_id":pid,"product":p,"is_cart":False,"field_index":0,
                    "field_answers":{},"field_queue":[]})
-    # Build field queue from product fields
-    fields = p.get("fields",[])
-    queue = [{"pid":pid,"item_name":p["name"],"field":f,"answer":""} for f in fields]
-    upd_temp(cid,{"field_queue":queue,"field_index":0})
+    # Always fetch fresh fields from DB
+    p_fresh = fb.get(f"products/{pid}") or p
+    fields  = p_fresh.get("fields", []) or p.get("fields", [])
+    queue   = [{"pid": pid, "item_name": p["name"], "field": fld, "answer": ""}
+               for fld in fields]
+    upd_temp(cid, {"field_queue": queue, "field_index": 0, "field_answers": {}})
     if queue:
+        set_state(cid, "wait_field")
         _ask_next_field(cid)
     else:
         u = get_user(cid)
-        _show_checkout_payment(cid, p.get("price",0), u)
+        _show_checkout_payment(cid, price, u)
 
 # ── Pay with Wallet ───────────────────────────────────────────────────────────
 @bot.callback_query_handler(func=lambda c: c.data=="pay_wallet")
@@ -525,19 +547,38 @@ def cb_pay_wallet(c):
                     else temp.get("product",{}).get("price",0)) or 0)
     wallet = float(u.get("wallet",0))
     if amount <= 0:
-        send_msg(cid, "❌ *Payment Error*\nCould not determine order amount. Please go back and try again.", reply_markup=kb_main()); return
-    if wallet < amount:
-        mk = types.InlineKeyboardMarkup(row_width=2)
-        mk.add(types.InlineKeyboardButton("➕ Add Money", callback_data="wallet_deposit"),
-               types.InlineKeyboardButton("❌ Cancel",    callback_data="cancel_order"))
+        # Amount still 0 — try re-reading from temp one more time
+        temp2 = get_temp(cid)
+        is_cart2 = temp2.get("is_cart", False)
+        if is_cart2:
+            amount = float(temp2.get("cart_total") or 0)
+        else:
+            amount = float(temp2.get("product", {}).get("price") or 0)
+
+    if amount <= 0:
+        mk2 = types.InlineKeyboardMarkup()
+        mk2.add(types.InlineKeyboardButton("🛍️ Go to Shop",  callback_data="shop"),
+                types.InlineKeyboardButton("❌ Cancel",       callback_data="cancel_order"))
         send_msg(cid,
-            f"❌ *Insufficient Wallet Balance!*\n"
+            "⚠️ *Session Expired*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "Your order session has expired.\n"
+            "Please start again from the Shop.",
+            reply_markup=mk2); return
+
+    if wallet < amount:
+        mk = types.InlineKeyboardMarkup(row_width=1)
+        mk.add(types.InlineKeyboardButton("➕ Deposit Money", callback_data="wallet_deposit"))
+        mk.add(types.InlineKeyboardButton("💳 Pay Online Instead", callback_data="pay_kimipay"))
+        mk.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_order"))
+        send_msg(cid,
+            f"💸 *Insufficient Wallet Balance*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"💰 Order Amount: *{fmt_price(amount)}*\n"
-            f"👛 Your Balance: *{fmt_price(wallet)}*\n"
-            f"📉 Shortfall: *{fmt_price(amount - wallet)}*\n"
+            f"👛 Your Wallet: *{fmt_price(wallet)}*\n"
+            f"📉 You need: *{fmt_price(amount - wallet)}* more\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"➕ Add money to your wallet to continue.",
+            f"Choose an option below:",
             reply_markup=mk); return
     _place_order(cid, "wallet", amount, None)
 
@@ -786,42 +827,56 @@ def msg_cancel(msg):
 def handle_field(msg):
     cid = str(msg.chat.id)
     if _guard_cancel(msg): msg_cancel(msg); return
-    temp = get_temp(cid)
-    queue = temp.get("field_queue",[])
-    idx = temp.get("field_index",0)
-    if idx >= len(queue):
+
+    temp  = get_temp(cid)
+    queue = temp.get("field_queue", [])
+    idx   = temp.get("field_index", 0)
+
+    # Safety: if queue empty but state is wait_field, clear and show payment
+    if not queue or idx >= len(queue):
+        is_cart = temp.get("is_cart", False)
+        amount  = float(temp.get("amount") or
+                        (temp.get("cart_total") if is_cart
+                         else temp.get("product", {}).get("price")) or 0)
+        clear_state(cid)
+        _show_checkout_payment(cid, amount, get_user(cid))
         return
+
     entry = queue[idx]
-    f = entry["field"]
-    label = f.get("label","field")
-    ftype = f.get("type","text")
-    val = msg.text.strip() if msg.text else ""
+    f     = entry["field"]
+    label = f.get("label", "Value")
+    ftype = f.get("type", "text")
+    val   = (msg.text or "").strip()
+
+    def _err(text):
+        """Send error and keep state=wait_field."""
+        set_state(cid, "wait_field")
+        bot.send_message(cid, text, parse_mode="Markdown",
+                         reply_markup=types.ForceReply(selective=True))
 
     # Validate
     if f.get("required") and not val:
-        send_msg(cid,f"❌ *{label}* is required. Please enter a value:",
-            reply_markup=types.ForceReply(selective=True)); return
-    if ftype=="email" and val and not re.match(r"^[^@]+@[^@]+\.[^@]+$",val):
-        send_msg(cid,f"❌ Invalid email format. Enter a valid email for *{label}*:",
-            reply_markup=types.ForceReply(selective=True)); return
-    if ftype in ("mobile","phone") and val and not re.match(r"^\d{7,15}$",val):
-        send_msg(cid,f"❌ Invalid mobile number. Digits only (7–15) for *{label}*:",
-            reply_markup=types.ForceReply(selective=True)); return
-    if ftype in ("uid","number") and val and not val.isdigit():
-        send_msg(cid,f"❌ *{label}* must be numeric. Enter again:",
-            reply_markup=types.ForceReply(selective=True)); return
-    if ftype=="uid" and val and len(val)<6:
-        send_msg(cid,f"❌ UID must be at least 6 digits. Enter your *{label}*:",
-            reply_markup=types.ForceReply(selective=True)); return
-    max_len = f.get("max_length",500)
-    if val and len(val)>int(max_len):
-        send_msg(cid,f"❌ *{label}* is too long (max {max_len} chars). Enter again:",
-            reply_markup=types.ForceReply(selective=True)); return
+        _err(f"❌ *{label}* is required. Please enter a value:"); return
+    if ftype == "email" and val:
+        if not re.match(r"^[^@]+@[^@]+\.[^@]+$", val):
+            _err(f"❌ Invalid email. Enter a valid email for *{label}*:"); return
+    if ftype in ("mobile", "phone") and val:
+        if not re.match(r"^\d{7,15}$", val):
+            _err(f"❌ Invalid number. Enter digits only (7–15) for *{label}*:"); return
+    if ftype in ("uid", "number") and val:
+        if not val.isdigit():
+            _err(f"❌ *{label}* must be numbers only. Enter again:"); return
+        if ftype == "uid" and len(val) < 6:
+            _err(f"❌ *{label}* must be at least 6 digits. Enter again:"); return
+    max_len = int(f.get("max_length", 500))
+    if val and len(val) > max_len:
+        _err(f"❌ *{label}* is too long (max {max_len} chars). Enter again:"); return
 
-    # Store answer
-    answers = temp.get("field_answers",{})
-    answers[label] = val
-    upd_temp(cid,{"field_answers":answers,"field_index":idx+1})
+    # Valid — store and move to next
+    answers         = temp.get("field_answers", {})
+    answers[label]  = val
+    upd_temp(cid, {"field_answers": answers, "field_index": idx + 1})
+    set_state(cid, "wait_field")  # keep state until all fields done
     _ask_next_field(cid)
 
 # ── Deposit ───────────────────────────────────────────────────────────────────
