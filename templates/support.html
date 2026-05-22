@@ -4,7 +4,9 @@
 {% block content %}
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
   <div>
-    <h2 style="font-size:1.1rem;font-weight:700">{{ chats|length }} Conversation(s)</h2>
+    <h2 style="font-size:1.1rem;font-weight:700">{{ chats|length }} Conversation(s)
+      <span id="totalMsgCount" style="font-size:.75rem;color:var(--muted);font-weight:400;margin-left:6px"></span>
+    </h2>
     <p style="color:var(--muted);font-size:.78rem">Click a user to open the chat</p>
   </div>
 </div>
@@ -92,5 +94,17 @@ async function pollUnread(){
   }catch(e){}
 }
 setInterval(pollUnread,15000);
+
+// Show total message count in header
+async function loadMsgCount(){
+  try{
+    const r=await fetch('/support/unread_count');
+    const d=await r.json();
+    const el=document.getElementById('totalMsgCount');
+    if(el && d.total_messages!==undefined)
+      el.textContent='· '+d.total_messages+' total message(s)';
+  }catch(e){}
+}
+loadMsgCount();
 </script>
 {% endblock %}
