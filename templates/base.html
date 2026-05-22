@@ -298,24 +298,6 @@ function closeModal(id){document.getElementById(id).classList.remove('open')}
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape')document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open'));
 });
-
-// Support unread badge poll every 8s
-async function pollSupportBadge(){
-  try{
-    const r = await fetch('/support/unread_count');
-    const d = await r.json();
-    const badge = document.getElementById('supportBadge');
-    if(!badge) return;
-    if(d.count > 0){
-      badge.textContent = d.count > 99 ? '99+' : d.count;
-      badge.style.display = 'inline';
-    } else {
-      badge.style.display = 'none';
-    }
-  } catch(e){}
-}
-pollSupportBadge();
-setInterval(pollSupportBadge, 8000);
 </script>
 {% block scripts %}{% endblock %}
 </body>
