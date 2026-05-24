@@ -37,3 +37,11 @@ def REFER_COMMISSION():return float(cfg("refer_commission", 10))
 def NOTIFY_CHAT_IDS():
     raw = cfg("notify_chat_ids","")
     return [x.strip() for x in raw.split(",") if x.strip()] if raw else []
+
+def SUPPORT_NOTIFY_CHAT_IDS():
+    """Separate list for customer support message alerts."""
+    raw = cfg("support_notify_chat_ids","")
+    if raw:
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    # fall back to main notify list if not set
+    return NOTIFY_CHAT_IDS()
