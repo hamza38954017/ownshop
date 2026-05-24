@@ -521,10 +521,10 @@ def settings():
         normal_keys = [
             "bot_token","bot_username","support_username","support_bot_token","support_greeting","support_auto_reply",
             "payment_link","rules_text",
-            "panel_name","panel_copyright",
+            "panel_name","panel_copyright","panel_url",
             "refer_commission","min_deposit","min_withdrawal","max_withdrawal",
             "kimipay_app_id","kimipay_api_key","kimipay_base_url",
-            "notify_chat_ids",
+            "notify_chat_ids","support_notify_chat_ids",
         ]
         for k in normal_keys:
             val = request.form.get(k,"")
@@ -561,50 +561,13 @@ def support():
             "chat_id":      cid,
             "user_name":    meta.get("user_name", cid),
             "username":     meta.get("username",""),
-            "photo_url":    meta.get("photo_url",""),
             "last_message": meta.get("last_message",""),
             "last_time":    meta.get("last_time",""),
             "last_ts":      meta.get("last_ts",0),
             "unread":       meta.get("unread",0),
-            "blocked":      meta.get("blocked", False),
         })
     chats.sort(key=lambda x: x.get("last_ts",0), reverse=True)
     return render_template("support.html", chats=chats)
-
-@app.route("/support/<cid>/block", methods=["POST"])
-@login_required
-def support_block(cid):
-    try:
-        import support_bot as sb
-        return jsonify(sb.block_user(cid))
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-@app.route("/support/<cid>/unblock", methods=["POST"])
-@login_required
-def support_unblock(cid):
-    try:
-        import support_bot as sb
-        return jsonify(sb.unblock_user(cid))
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-@app.route("/support/<cid>/send_file", methods=["POST"])
-@login_required
-def support_send_file(cid):
-    f = request.files.get("file")
-    if not f:
-        return jsonify({"error": "No file provided"}), 400
-    caption   = request.form.get("text", "").strip()
-    file_bytes = f.read()
-    filename   = f.filename or "file"
-    mime_type  = f.content_type or "application/octet-stream"
-    try:
-        import support_bot as sb
-        result = sb.admin_send_file(cid, file_bytes, filename, mime_type, caption)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)})
 
 @app.route("/support/<cid>")
 @login_required
@@ -613,9 +576,9 @@ def support_chat(cid):
     meta = data.get("meta", {})
     msgs_raw = data.get("messages", {}) or {}
     msgs = sorted(msgs_raw.values(), key=lambda m: m.get("ts",0))
-    # Mark all user messages as read
+    # Mark all messages as read when admin opens chat
     for mid, m in msgs_raw.items():
-        if m.get("from")=="user" and not m.get("read"):
+        if not m.get("read"):
             fb.patch(f"support/{cid}/messages/{mid}", {"read": True})
     fb.patch(f"support/{cid}/meta", {"unread": 0})
     return render_template("support_chat.html", cid=cid, meta=meta, messages=msgs)
