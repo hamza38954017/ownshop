@@ -66,9 +66,31 @@
   <div class="form-card">
     <h3 style="margin-bottom:16px;font-size:.9rem;color:var(--muted)">🔔 Admin Notifications</h3>
     <div class="form-group">
-      <label class="form-label">Notify Chat IDs (comma separated)</label>
+      <label class="form-label">Order/Deposit/Withdrawal Notify IDs <span style="color:var(--muted)">(comma separated)</span></label>
       <input name="notify_chat_ids" class="form-control" value="{{ cfg.get('notify_chat_ids','') }}" placeholder="123456789,987654321"/>
-      <div class="form-hint">These Telegram IDs receive order/deposit/withdrawal alerts.</div>
+      <div class="form-hint">These Telegram IDs receive order, deposit and withdrawal alerts.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">
+        💬 Customer Support Notify IDs <span style="color:var(--muted)">(comma separated)</span>
+      </label>
+      <input name="support_notify_chat_ids" class="form-control"
+             value="{{ cfg.get('support_notify_chat_ids','') }}"
+             placeholder="123456789,987654321"/>
+      <div class="form-hint">
+        These IDs receive a Telegram alert every time a customer sends a support message.
+        Leave blank to use the same IDs as above.
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Admin Panel URL</label>
+      <input name="panel_url" class="form-control"
+             value="{{ cfg.get('panel_url','') }}"
+             placeholder="https://yourapp.onrender.com"/>
+      <div class="form-hint">
+        Used to generate "Open Admin Panel" links in support notifications.
+        Example: <code>https://ownshop-76n0.onrender.com</code>
+      </div>
     </div>
   </div>
 </div>
