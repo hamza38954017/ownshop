@@ -32,10 +32,32 @@ user_temp   = {}
 
 def get_state(cid):   return user_states.get(str(cid))
 def set_state(cid,s): user_states[str(cid)] = s
-def clear_state(cid): user_states.pop(str(cid),None); user_temp.pop(str(cid),None)
-def get_temp(cid):    return user_temp.get(str(cid),{})
-def set_temp(cid,d):  user_temp[str(cid)] = d
-def upd_temp(cid,d):  user_temp.setdefault(str(cid),{}).update(d)
+def clear_state(cid):
+    user_states.pop(str(cid), None)
+    user_temp.pop(str(cid), None)
+    try: fb.delete(f"user_temp/{cid}")
+    except: pass
+
+def get_temp(cid):
+    """Return temp from memory; fall back to Firebase if not present (survives restarts)."""
+    cid = str(cid)
+    if cid not in user_temp:
+        saved = fb.get(f"user_temp/{cid}")
+        if saved and isinstance(saved, dict):
+            user_temp[cid] = saved
+    return user_temp.get(cid, {})
+
+def set_temp(cid, d):
+    cid = str(cid)
+    user_temp[cid] = d
+    try: fb.put(f"user_temp/{cid}", d)
+    except: pass
+
+def upd_temp(cid, d):
+    cid = str(cid)
+    user_temp.setdefault(cid, {}).update(d)
+    try: fb.patch(f"user_temp/{cid}", d)
+    except: pass
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def now_str(): return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
