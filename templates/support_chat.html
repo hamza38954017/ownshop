@@ -242,7 +242,8 @@
         <div class="bubble-meta">
           {{ (m.time or '')[:16] }}
           {% if is_admin %}
-            <span style="color:{{ 'var(--accent3)' if m.read else 'inherit' }}">
+            <span data-tick="{{ m.msg_id }}"
+                  style="color:{{ 'var(--accent3)' if m.read else 'inherit' }};transition:color .3s">
               {{ '✓✓' if m.read else '✓' }}
             </span>
           {% endif %}
@@ -546,11 +547,36 @@ function uploadWithProgress(url, formData, onProgress){
   });
 }
 
-// ── Poll for new messages ────────────────────────────────────────────────────
+// Track read state: { msg_id: true/false }
+const readState = {};
+document.querySelectorAll('[data-tick]').forEach(el => {
+  readState[el.dataset.tick] = el.textContent.trim() === '✓✓';
+});
+
+// ── Poll for new messages + read receipt updates ──────────────────────────────
 async function pollMessages(){
   try {
     const r    = await fetch(`/support/${CID}/messages`);
     const msgs = await r.json();
+
+    // 1. Update tick icons for any admin message whose read state changed
+    msgs.forEach(m => {
+      if(m.from !== 'admin') return;
+      const mid  = m.msg_id || m.msg_id;
+      const el   = document.querySelector(`[data-tick="${mid}"]`);
+      if(!el) return;
+      const wasRead = readState[mid];
+      if(m.read && !wasRead){
+        // Flip to double tick with a short highlight animation
+        el.textContent = '✓✓';
+        el.style.color = 'var(--accent3)';
+        el.style.fontWeight = '600';
+        setTimeout(() => { el.style.fontWeight = ''; }, 1500);
+        readState[mid] = true;
+      }
+    });
+
+    // 2. Reload only when message count changes (new message arrived)
     if(msgs.length !== lastMsgCount){
       renderMessages(msgs);
       lastMsgCount = msgs.length;
