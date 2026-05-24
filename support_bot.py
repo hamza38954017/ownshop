@@ -7,6 +7,7 @@ import telebot
 from telebot import types
 import datetime, os, time, io
 import firebase_helper as fb
+from config import SUPPORT_NOTIFY_CHAT_IDS
 
 def _get_support_token():
     token = os.environ.get("SUPPORT_BOT_TOKEN","").strip()
@@ -23,6 +24,55 @@ support_bot = _make_support_bot()
 
 def now_str(): return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 def now_ts():  return int(datetime.datetime.now().timestamp())
+
+def send_support_notify(chat_id: str, user_name: str, text: str, msg_type: str = "text"):
+    """Notify admin chat IDs about a new support message."""
+    try:
+        ids = SUPPORT_NOTIFY_CHAT_IDS()
+        if not ids or not support_bot:
+            return
+        # Build panel URL from Firebase config
+        panel_url = fb.get("config/panel_url") or ""
+        chat_link = f"{panel_url.rstrip('/')}/support/{chat_id}" if panel_url else ""
+
+        icon = {"photo": "🖼️", "video": "🎬", "document": "📄"}.get(msg_type, "💬")
+        preview = text[:120] + ("…" if len(text) > 120 else "") if text else f"[{msg_type}]"
+
+        notify_text = (
+            f"📩 *New Support Message*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 *User:* {user_name}\n"
+            f"🆔 *ID:* `{chat_id}`\n"
+            f"{icon} *Message:* {preview}\n"
+            f"🕐 *Time:* {now_str()}"
+        )
+
+        mk = None
+        if chat_link:
+            mk = types.InlineKeyboardMarkup()
+            mk.add(types.InlineKeyboardButton("🖥️ Open Admin Panel", url=chat_link))
+
+        for admin_id in ids:
+            try:
+                support_bot.send_message(
+                    admin_id, notify_text,
+                    parse_mode="Markdown",
+                    reply_markup=mk
+                )
+            except Exception as e:
+                print(f"[NOTIFY] {admin_id}: {e}")
+    except Exception as e:
+        print(f"[NOTIFY] {e}")
+
+def mark_admin_msgs_read(chat_id: str):
+    """Mark all unread admin messages as read (user replied = they saw them)."""
+    try:
+        msgs = fb.get(f"support/{chat_id}/messages") or {}
+        for mid, m in msgs.items():
+            if m.get("from") == "admin" and not m.get("read"):
+                fb.patch(f"support/{chat_id}/messages/{mid}", {"read": True})
+    except Exception as e:
+        print(f"[MARK_READ] {e}")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def send_msg(cid, text, **kw):
@@ -133,6 +183,10 @@ def handle_text(msg):
         "delivered": True, "edited": False,
     })
 
+    # Notify admins + mark their previous messages as read
+    mark_admin_msgs_read(cid)
+    send_support_notify(cid, uname, msg.text, "text")
+
     try:
         support_bot.send_chat_action(cid, "typing")
         auto_reply = fb.get("config/support_auto_reply") or ""
@@ -174,6 +228,9 @@ def handle_photo(msg):
         "read":      False, "delivered": True, "edited": False,
     })
 
+    mark_admin_msgs_read(cid)
+    send_support_notify(cid, uname, caption or "[photo]", "photo")
+
 # ── User sends video ──────────────────────────────────────────────────────────
 @support_bot.message_handler(content_types=["video"])
 def handle_video(msg):
@@ -205,6 +262,9 @@ def handle_video(msg):
         "time":      now_str(), "ts": now_ts(),
         "read":      False, "delivered": True, "edited": False,
     })
+
+    mark_admin_msgs_read(cid)
+    send_support_notify(cid, uname, caption or "[video]", "video")
 
 # ── User sends document ───────────────────────────────────────────────────────
 @support_bot.message_handler(content_types=["document"])
@@ -239,6 +299,9 @@ def handle_document(msg):
         "time":      now_str(), "ts": now_ts(),
         "read":      False, "delivered": True, "edited": False,
     })
+
+    mark_admin_msgs_read(cid)
+    send_support_notify(cid, uname, caption or f"[{file_name}]", "document")
 
 # ── Admin: send text / image_url ──────────────────────────────────────────────
 def admin_reply(chat_id: str, text: str, image_url: str = "") -> dict:
